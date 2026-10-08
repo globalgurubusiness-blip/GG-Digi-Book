@@ -23,7 +23,7 @@
       getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged 
     } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
     import { 
-      getFirestore, collection, addDoc, onSnapshot, query, where, doc, updateDoc, deleteDoc, getDocs 
+      getFirestore, collection, addDoc, onSnapshot, query, where, doc, updateDoc, deleteDoc, getDocs, writeBatch 
     } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
     const firebaseConfig = {
@@ -48,6 +48,10 @@
     let currentTransactions = [];
     let unsubscribeTx = null;
     let attachedPhotoBase64 = "";
+
+    // App Net Ledger Balance for Galla Cross Match
+    let appCalculatedNetBalance = 0;
+    let pendingEntryType = 'diye';
 
     // Web Audio Synthesizer Engine
     let audioCtx = null;
@@ -178,23 +182,38 @@
       signOut(auth);
     };
 
+    // 3-Page Navigation Switcher
     window.switchTab = (tab) => {
       playSound('tap');
       const ledgerView = document.getElementById('view-ledger');
+      const accountsView = document.getElementById('view-accounts');
       const settingsView = document.getElementById('view-settings');
+
       const tabLedgerBtn = document.getElementById('tab-btn-ledger');
+      const tabAccountsBtn = document.getElementById('tab-btn-accounts');
       const tabSettingsBtn = document.getElementById('tab-btn-settings');
+
+      ledgerView.classList.add('hidden');
+      accountsView.classList.add('hidden');
+      settingsView.classList.add('hidden');
+
+      const inactiveClass = "flex-1 py-2.5 text-center text-slate-400 font-semibold text-xs flex flex-col items-center gap-1 border-t-2 border-transparent hover:text-slate-600 transition";
+      const activeClass = "flex-1 py-2.5 text-center text-emerald-700 font-extrabold text-xs flex flex-col items-center gap-1 border-t-2 border-emerald-600 transition";
+
+      tabLedgerBtn.className = inactiveClass;
+      tabAccountsBtn.className = inactiveClass;
+      tabSettingsBtn.className = inactiveClass;
 
       if (tab === 'ledger') {
         ledgerView.classList.remove('hidden');
-        settingsView.classList.add('hidden');
-        tabLedgerBtn.className = "flex-1 py-3 text-center text-emerald-700 font-extrabold text-xs flex flex-col items-center gap-1 border-t-2 border-emerald-600 transition";
-        tabSettingsBtn.className = "flex-1 py-3 text-center text-slate-400 font-semibold text-xs flex flex-col items-center gap-1 border-t-2 border-transparent hover:text-slate-600 transition";
-      } else {
-        ledgerView.classList.add('hidden');
+        tabLedgerBtn.className = activeClass;
+      } else if (tab === 'accounts') {
+        accountsView.classList.remove('hidden');
+        tabAccountsBtn.className = activeClass;
+        calculateSingleGallaAudit();
+      } else if (tab === 'settings') {
         settingsView.classList.remove('hidden');
-        tabSettingsBtn.className = "flex-1 py-3 text-center text-emerald-700 font-extrabold text-xs flex flex-col items-center gap-1 border-t-2 border-emerald-600 transition";
-        tabLedgerBtn.className = "flex-1 py-3 text-center text-slate-400 font-semibold text-xs flex flex-col items-center gap-1 border-t-2 border-transparent hover:text-slate-600 transition";
+        tabSettingsBtn.className = activeClass;
       }
     };
 
@@ -216,6 +235,8 @@
         document.getElementById('total-payable').innerText = `Rs. ${totalPayable.toLocaleString()}`;
 
         const net = totalReceivable - totalPayable;
+        appCalculatedNetBalance = net;
+
         const netEl = document.getElementById('net-balance');
         const netStatusEl = document.getElementById('net-status');
         const custCountEl = document.getElementById('customer-total-count');
@@ -238,6 +259,7 @@
         }
 
         renderCustomers();
+        calculateSingleGallaAudit();
       }, (err) => console.error("Firestore Error:", err));
     }
 
@@ -403,6 +425,36 @@
       playSound('close');
       document.getElementById('tx-modal').classList.add('hidden');
       if (unsubscribeTx) unsubscribeTx();
+    };
+
+    // Reference App Feature: Open Entry Mode Picker (Image, Voice, Manual)
+    window.openEntrySheet = (type) => {
+      playSound('tap');
+      pendingEntryType = type;
+      const titleEl = document.getElementById('entry-mode-title');
+      titleEl.innerText = type === 'diye' ? 'Cash Out (You Gave)' : 'Cash In (You Got)';
+      titleEl.className = type === 'diye' ? 'text-base font-extrabold text-rose-600' : 'text-base font-extrabold text-emerald-600';
+      document.getElementById('entry-mode-sheet').classList.remove('hidden');
+    };
+
+    window.closeEntrySheet = () => {
+      playSound('close');
+      document.getElementById('entry-mode-sheet').classList.add('hidden');
+    };
+
+    window.selectEntryMode = (mode) => {
+      closeEntrySheet();
+      if (mode === 'image') {
+        document.getElementById('receipt-camera-input').click();
+      } else if (mode === 'voice') {
+        startSpeechRecognition();
+      } else {
+        document.getElementById('tx-amount').focus();
+      }
+    };
+
+    window.submitQuickEntry = () => {
+      addTransaction(pendingEntryType);
     };
 
     window.addTransaction = async (type) => {
@@ -584,10 +636,45 @@
       pdf.save(`${selectedCustomer.name}_Ledger.pdf`);
     };
 
-    // Dual Backup Handler
+    // PAGE 2: EXACT SINGLE-BOX GALLA AUDIT MATCH (No Notes Counting)
+    window.calculateSingleGallaAudit = () => {
+      const gallaInputVal = parseFloat(document.getElementById('single-galla-amount').value) || 0;
+      document.getElementById('total-physical-cash').innerText = `Rs. ${gallaInputVal.toLocaleString()}`;
+
+      const expectedAmount = appCalculatedNetBalance;
+      document.getElementById('expected-app-cash').innerText = `Rs. ${expectedAmount.toLocaleString()}`;
+
+      const diff = gallaInputVal - expectedAmount;
+      const diffEl = document.getElementById('audit-difference');
+      const badgeEl = document.getElementById('audit-status-badge');
+
+      diffEl.innerText = `Rs. ${Math.abs(diff).toLocaleString()}`;
+
+      if (diff === 0) {
+        diffEl.className = "text-2xl font-black text-emerald-600 tracking-tight";
+        badgeEl.className = "text-xs font-bold px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300";
+        badgeEl.innerText = "✅ Exact Match (Galla aur GG Digi Book Barabar)";
+      } else if (diff < 0) {
+        diffEl.className = "text-2xl font-black text-rose-600 tracking-tight";
+        badgeEl.className = "text-xs font-bold px-3 py-1 rounded-full bg-rose-100 text-rose-800 border border-rose-300";
+        badgeEl.innerText = `⚠️ Cash Short (Gally me Rs. ${Math.abs(diff).toLocaleString()} Kam Hain)`;
+      } else {
+        diffEl.className = "text-2xl font-black text-blue-600 tracking-tight";
+        badgeEl.className = "text-xs font-bold px-3 py-1 rounded-full bg-blue-100 text-blue-800 border border-blue-300";
+        badgeEl.innerText = `💡 Excess Cash (Gally me Rs. ${diff.toLocaleString()} Ziada Hain)`;
+      }
+    };
+
+    window.resetGallaInput = () => {
+      playSound('tap');
+      document.getElementById('single-galla-amount').value = '';
+      calculateSingleGallaAudit();
+    };
+
+    // DUAL BACKUP HANDLER
     window.downloadBackup = async () => {
       playSound('tap');
-      const choice = prompt("Select Backup Format:\n1 = Excel Sheet (.CSV)\n2 = JSON Backup (.JSON)\n\nType 1 or 2 below:", "1");
+      const choice = prompt("Select Backup Format:\n1 = Excel Sheet (.CSV)\n2 = JSON Backup (.JSON - Useful to shift to another email)\n\nType 1 or 2 below:", "1");
       
       if (!choice || (choice !== "1" && choice !== "2")) {
         return;
@@ -666,6 +753,69 @@
         alert("Backup failed: " + err.message);
       }
     };
+
+    // IMPORT / RESTORE DATA FEATURE (Transfer data between accounts)
+    window.triggerImportBackup = () => {
+      playSound('tap');
+      document.getElementById('import-json-input').click();
+    };
+
+    window.handleImportBackupFile = async (event) => {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      const confirmRestore = confirm("Are you sure you want to import this ledger backup into your current account? Existing and new data will be synced safely.");
+      if (!confirmRestore) {
+        event.target.value = "";
+        return;
+      }
+
+      playSound('tap');
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        try {
+          const imported = JSON.parse(e.target.result);
+          if (!imported.customers || !imported.transactions) {
+            throw new Error("Invalid backup format. Please select an authentic GG Digi Book JSON backup.");
+          }
+
+          const customerIdMap = {};
+          // 1. Restore Customers under Current User
+          for (const cust of imported.customers) {
+            const newCustRef = await addDoc(collection(db, "customers"), {
+              userId: currentUser.uid,
+              name: cust.name || "Customer",
+              phone: cust.phone || "",
+              balance: cust.balance || 0,
+              createdAt: cust.createdAt || new Date().toISOString()
+            });
+            customerIdMap[cust.id] = newCustRef.id;
+          }
+
+          // 2. Restore Transactions mapped to new customers
+          for (const tx of imported.transactions) {
+            const mappedCustomerId = customerIdMap[tx.customerId] || tx.customerId;
+            await addDoc(collection(db, "transactions"), {
+              userId: currentUser.uid,
+              customerId: mappedCustomerId,
+              type: tx.type || "diye",
+              amount: tx.amount || 0,
+              note: tx.note || "",
+              receiptImage: tx.receiptImage || "",
+              createdAt: tx.createdAt || new Date().toISOString()
+            });
+          }
+
+          playSound('success');
+          alert(`Successfully imported ${imported.customers.length} customers and ${imported.transactions.length} transactions to your account!`);
+          event.target.value = "";
+        } catch (err) {
+          alert("Import Error: " + err.message);
+          event.target.value = "";
+        }
+      };
+      reader.readAsText(file);
+    };
   </script>
 </head>
 <body class="bg-slate-50 min-h-screen text-slate-800 antialiased selection:bg-emerald-500 selection:text-white">
@@ -708,7 +858,7 @@
       </span>
     </header>
 
-    <!-- TAB 1: LEDGER VIEW -->
+    <!-- PAGE 1: LEDGER VIEW -->
     <div id="view-ledger" class="flex-1 flex flex-col pb-16">
       <!-- Net Balance & Summary Cards -->
       <div class="p-4 bg-gradient-to-b from-emerald-50/60 to-transparent border-b border-slate-100 space-y-3">
@@ -765,7 +915,64 @@
       </div>
     </div>
 
-    <!-- TAB 2: SETTINGS & MORE PAGE -->
+    <!-- PAGE 2: GALLA CASH & ACCOUNTS CROSS-CHECK (Single Direct Amount Match) -->
+    <div id="view-accounts" class="hidden flex-1 p-4 pb-20 space-y-4 overflow-y-auto bg-slate-50/70">
+      
+      <!-- Top Overview Audit Banner -->
+      <div class="bg-gradient-to-br from-slate-900 to-slate-800 text-white p-4 rounded-3xl shadow-lg space-y-3">
+        <div class="flex justify-between items-center">
+          <div>
+            <p class="text-[10px] font-bold text-emerald-400 uppercase tracking-wider">Reconciliation Audit</p>
+            <h3 class="text-sm font-extrabold text-white">Galla Cash vs GG Digi Book</h3>
+          </div>
+          <button onclick="resetGallaInput()" class="text-[10px] font-bold bg-white/10 hover:bg-white/20 px-2.5 py-1 rounded-lg transition active:scale-95">
+            🔄 Reset
+          </button>
+        </div>
+
+        <div class="grid grid-cols-2 gap-2 pt-1 border-t border-white/10">
+          <div class="bg-white/5 p-2.5 rounded-xl">
+            <p class="text-[10px] text-slate-300 font-medium">Galla Physical Cash</p>
+            <h4 id="total-physical-cash" class="text-base font-extrabold text-emerald-300 mt-0.5">Rs. 0</h4>
+          </div>
+          <div class="bg-white/5 p-2.5 rounded-xl">
+            <p class="text-[10px] text-slate-300 font-medium">GG Digi Book (Expected)</p>
+            <h4 id="expected-app-cash" class="text-base font-extrabold text-white mt-0.5">Rs. 0</h4>
+          </div>
+        </div>
+
+        <!-- Difference / Match Result -->
+        <div class="bg-white p-3 rounded-2xl text-center space-y-1 shadow-inner">
+          <p class="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">Farq (Difference)</p>
+          <h2 id="audit-difference" class="text-2xl font-black text-slate-800 tracking-tight">Rs. 0</h2>
+          <div class="pt-1">
+            <span id="audit-status-badge" class="text-xs font-bold px-3 py-1 rounded-full bg-slate-100 text-slate-600">
+              Checking...
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Single Direct Cash in Galla Entry Box -->
+      <div class="bg-white p-5 rounded-3xl border border-slate-200/80 shadow-sm space-y-3">
+        <div>
+          <h4 class="text-xs font-extrabold text-slate-800 uppercase tracking-wider">Enter Physical Galla Cash</h4>
+          <p class="text-[11px] text-slate-400 mt-0.5">Apne galle me mojood kul raqam (Total Amount) yahan likhein taake foran cross-check ho sake:</p>
+        </div>
+
+        <div class="relative">
+          <span class="absolute left-3.5 top-3 text-slate-400 font-bold text-sm">Rs.</span>
+          <input type="number" id="single-galla-amount" oninput="calculateSingleGallaAudit()" placeholder="0" class="w-full pl-11 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-base font-black text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition">
+        </div>
+
+        <div class="p-3 bg-emerald-50/60 rounded-xl border border-emerald-100 text-[11px] text-emerald-900">
+          💡 <strong>Tip:</strong> Notes alag alag gin'ny ki zaroorat nahi. Sirf gally ka total daalein aur check karein ke balance barabar hai ya koi farq aa raha hai.
+        </div>
+      </div>
+
+    </div>
+
+    <!-- PAGE 3: SETTINGS & MORE VIEW -->
     <div id="view-settings" class="hidden flex-1 p-4 pb-20 space-y-4 overflow-y-auto bg-slate-50/60">
       
       <!-- Account Profile Card -->
@@ -784,17 +991,33 @@
         </button>
       </div>
 
-      <!-- Data Backup & Safety Section -->
+      <!-- Data Backup & Account Transfer Section -->
       <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3">
-        <h4 class="text-xs font-extrabold text-slate-400 uppercase tracking-wider">Data & Security</h4>
+        <h4 class="text-xs font-extrabold text-slate-400 uppercase tracking-wider">Backup & Account Transfer</h4>
+        
+        <!-- Export Backup -->
         <div class="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-100">
           <div>
-            <h5 class="text-xs font-bold text-slate-800">Export Ledger Backup</h5>
-            <p class="text-[11px] text-slate-400">Download Excel (.CSV) or Raw (.JSON)</p>
+            <h5 class="text-xs font-bold text-slate-800">Export Backup</h5>
+            <p class="text-[11px] text-slate-400">Download Excel (.CSV) or JSON</p>
           </div>
-          <button onclick="downloadBackup()" class="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-sm transition active:scale-95 flex items-center gap-1.5">
+          <button onclick="downloadBackup()" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-sm transition active:scale-95 flex items-center gap-1.5">
             📥 Download
           </button>
+        </div>
+
+        <!-- Import / Shift Account Feature -->
+        <div class="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-100">
+          <div>
+            <h5 class="text-xs font-bold text-slate-800">Import / Restore Ledger</h5>
+            <p class="text-[11px] text-slate-400">Shift data from another Gmail</p>
+          </div>
+          <div>
+            <button onclick="triggerImportBackup()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-bold shadow-sm transition active:scale-95 flex items-center gap-1.5">
+              📤 Import JSON
+            </button>
+            <input type="file" id="import-json-input" accept=".json" onchange="handleImportBackupFile(event)" class="hidden">
+          </div>
         </div>
       </div>
 
@@ -818,12 +1041,12 @@
           </span>
         </a>
 
-        <!-- Social Media Grid Icons (Exact URLs Linked) -->
+        <!-- Social Media Grid Icons -->
         <div>
           <p class="text-[11px] font-bold text-slate-500 mb-2.5">Connect Across Platforms</p>
           <div class="grid grid-cols-5 gap-2">
             
-            <!-- YouTube (Exact Channel Link) -->
+            <!-- YouTube -->
             <a href="https://www.youtube.com/@globalguruofficial1" target="_blank" title="YouTube" class="flex flex-col items-center justify-center p-2.5 rounded-2xl bg-white border border-slate-200/80 hover:border-red-500 hover:shadow-md transition active:scale-95 shadow-sm">
               <svg class="w-6 h-6 text-[#FF0000]" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
@@ -831,7 +1054,7 @@
               <span class="text-[9px] font-bold text-slate-700 mt-1.5">YouTube</span>
             </a>
 
-            <!-- Facebook (Exact Page Link) -->
+            <!-- Facebook -->
             <a href="https://web.facebook.com/globalguruofficial1" target="_blank" title="Facebook" class="flex flex-col items-center justify-center p-2.5 rounded-2xl bg-white border border-slate-200/80 hover:border-blue-600 hover:shadow-md transition active:scale-95 shadow-sm">
               <svg class="w-6 h-6 text-[#1877F2]" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
@@ -839,7 +1062,7 @@
               <span class="text-[9px] font-bold text-slate-700 mt-1.5">Facebook</span>
             </a>
 
-            <!-- Instagram (Exact Profile Link) -->
+            <!-- Instagram -->
             <a href="https://instagram.com/globalguruofficial1" target="_blank" title="Instagram" class="flex flex-col items-center justify-center p-2.5 rounded-2xl bg-white border border-slate-200/80 hover:border-pink-500 hover:shadow-md transition active:scale-95 shadow-sm">
               <svg class="w-6 h-6 text-[#E4405F]" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/>
@@ -847,7 +1070,7 @@
               <span class="text-[9px] font-bold text-slate-700 mt-1.5">Instagram</span>
             </a>
 
-            <!-- TikTok (Exact Profile Link) -->
+            <!-- TikTok -->
             <a href="https://www.tiktok.com/@globalguruofficial" target="_blank" title="TikTok" class="flex flex-col items-center justify-center p-2.5 rounded-2xl bg-white border border-slate-200/80 hover:border-black hover:shadow-md transition active:scale-95 shadow-sm">
               <svg class="w-6 h-6 text-black" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M12.525.02c1.31-.02 2.61-.01 3.91-.02.08 1.53.63 3.09 1.75 4.17 1.12 1.11 2.7 1.62 4.24 1.79v4.03c-1.44-.05-2.89-.35-4.2-.97-.57-.26-1.1-.59-1.62-.99v9.09c-.03 2.01-.84 4.02-2.34 5.37-1.63 1.49-3.92 2.16-6.09 1.81-2.2-.33-4.22-1.67-5.35-3.58-1.16-1.92-1.34-4.37-.5-6.38.86-2.02 2.72-3.53 4.88-3.99.78-.17 1.58-.2 2.37-.12v4.22c-.61-.08-1.25-.01-1.83.21-.82.3-1.49.95-1.83 1.76-.36.85-.31 1.84.14 2.64.44.8 1.25 1.36 2.15 1.49.99.16 2.04-.15 2.77-.85.66-.63 1.05-1.53 1.05-2.45V.02h.65z"/>
@@ -855,7 +1078,7 @@
               <span class="text-[9px] font-bold text-slate-700 mt-1.5">TikTok</span>
             </a>
 
-            <!-- Threads (Exact Profile Link) -->
+            <!-- Threads -->
             <a href="https://www.threads.net/@globalguruofficial1" target="_blank" title="Threads" class="flex flex-col items-center justify-center p-2.5 rounded-2xl bg-white border border-slate-200/80 hover:border-black hover:shadow-md transition active:scale-95 shadow-sm">
               <svg class="w-6 h-6 text-black" viewBox="0 0 192 192" fill="currentColor">
                 <path d="M141.537 88.9883C140.71 88.5919 139.87 88.2109 139.019 87.8456C137.537 60.5382 122.616 44.905 97.5619 44.745C97.4484 44.7443 97.3355 44.7443 97.222 44.7443C82.2364 44.7443 69.7731 51.1409 62.102 62.7807L75.5727 72.8138C81.0827 64.4538 89.2612 60.7788 97.2341 60.7788C110.748 60.7788 119.537 69.6013 120.487 84.1506C113.626 83.1756 106.376 82.8093 98.7188 83.0569C72.0625 83.9169 55.4544 98.2431 56.0969 119.349C56.7088 139.467 73.0688 152.012 94.0625 152.012C108.799 152.012 119.981 145.474 126.791 133.029C132.846 144.159 143.141 150.144 157.069 150.144C174.197 150.144 186.281 138.834 186.281 118.892C186.281 83.2181 158.469 64.9125 120.891 64.9125C78.435 64.9125 47.9625 87.9712 47.9625 125.683C47.9625 152.128 66.525 170.835 96.0938 170.835C112.575 170.835 126.338 165.176 135.038 154.512L147.244 165.816C134.906 180.705 116.794 187.688 96.0938 187.688C56.2875 187.688 30.7125 162.248 30.7125 125.683C30.7125 76.5412 69.4125 48.0675 120.891 48.0675C170.775 48.0675 203.531 73.7437 203.531 118.892C203.531 148.164 184.95 166.995 157.069 166.995C139.631 166.995 127.144 158.625 121.284 144.188C114.712 153.281 104.981 157.942 93.6844 157.942C77.475 157.942 65.5125 147.536 64.9969 131.627C64.4469 114.675 77.2969 103.568 98.2406 102.898C105.797 102.656 113.128 103.181 120.084 104.426C118.912 95.8425 112.444 89.9625 101.466 89.9625C95.4281 89.9625 89.8781 92.205 85.9406 96.225L75.6094 84.8812C81.8531 78.4725 90.75 74.8725 101.466 74.8725C119.869 74.8725 133.725 84.7725 136.003 103.886C137.944 104.839 139.791 105.889 141.537 107.031V88.9883ZM120.084 117.892C113.888 116.897 107.381 116.488 100.678 116.702C88.2469 117.098 79.9594 122.951 80.2875 131.957C80.6062 140.719 88.7531 146.104 99.4594 146.104C108.975 146.104 116.634 140.404 120.084 130.414V117.892Z"/>
@@ -886,19 +1109,22 @@
       </div>
     </div>
 
-    <!-- BOTTOM APP NAVIGATION BAR (Native Mobile Tabs) -->
+    <!-- BOTTOM APP NAVIGATION BAR (3 TABS) -->
     <nav class="fixed bottom-0 max-w-md w-full bg-white border-t border-slate-200 flex z-30 shadow-lg">
-      <button id="tab-btn-ledger" onclick="switchTab('ledger')" class="flex-1 py-3 text-center text-emerald-700 font-extrabold text-xs flex flex-col items-center gap-1 border-t-2 border-emerald-600 transition">
+      <button id="tab-btn-ledger" onclick="switchTab('ledger')" class="flex-1 py-2.5 text-center text-emerald-700 font-extrabold text-xs flex flex-col items-center gap-1 border-t-2 border-emerald-600 transition">
         <span class="text-base">📖</span> Khata
       </button>
-      <button id="tab-btn-settings" onclick="switchTab('settings')" class="flex-1 py-3 text-center text-slate-400 font-semibold text-xs flex flex-col items-center gap-1 border-t-2 border-transparent hover:text-slate-600 transition">
-        <span class="text-base">⚙️</span> Settings & Contact
+      <button id="tab-btn-accounts" onclick="switchTab('accounts')" class="flex-1 py-2.5 text-center text-slate-400 font-semibold text-xs flex flex-col items-center gap-1 border-t-2 border-transparent hover:text-slate-600 transition">
+        <span class="text-base">💰</span> Accounts / Galla
+      </button>
+      <button id="tab-btn-settings" onclick="switchTab('settings')" class="flex-1 py-2.5 text-center text-slate-400 font-semibold text-xs flex flex-col items-center gap-1 border-t-2 border-transparent hover:text-slate-600 transition">
+        <span class="text-base">⚙️</span> Settings
       </button>
     </nav>
 
   </div>
 
-  <!-- 3. CUSTOMER LEDGER MODAL -->
+  <!-- 4. CUSTOMER LEDGER MODAL -->
   <div id="tx-modal" onclick="closeModal()" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
     <div onclick="event.stopPropagation()" class="bg-white w-full max-w-md max-h-[92vh] rounded-t-3xl sm:rounded-3xl p-5 shadow-2xl flex flex-col overflow-hidden animate-in">
       
@@ -948,12 +1174,13 @@
           </div>
         </div>
 
+        <!-- Reference App Cash In / Cash Out Action Buttons -->
         <div class="grid grid-cols-2 gap-2">
-          <button onclick="addTransaction('diye')" class="py-2.5 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white text-xs font-bold rounded-xl shadow-md shadow-rose-600/10 transition">
-            - You Gave (Debit)
+          <button onclick="openEntrySheet('diye')" class="py-2.5 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white text-xs font-bold rounded-xl shadow-md shadow-rose-600/10 transition flex items-center justify-center gap-1.5">
+            <span>🔴</span> CASH OUT
           </button>
-          <button onclick="addTransaction('liye')" class="py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-bold rounded-xl shadow-md shadow-emerald-600/10 transition">
-            + You Got (Credit)
+          <button onclick="openEntrySheet('liye')" class="py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-bold rounded-xl shadow-md shadow-emerald-600/10 transition flex items-center justify-center gap-1.5">
+            <span>🟢</span> CASH IN
           </button>
         </div>
 
@@ -967,6 +1194,43 @@
         </div>
       </div>
 
+    </div>
+  </div>
+
+  <!-- 5. ENTRY MODE MODAL (Reference App: Image / Voice / Manual) -->
+  <div id="entry-mode-sheet" onclick="closeEntrySheet()" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+    <div onclick="event.stopPropagation()" class="bg-white w-full max-w-sm rounded-t-3xl sm:rounded-3xl p-5 shadow-2xl space-y-4">
+      <div class="text-center">
+        <h4 id="entry-mode-title" class="text-base font-extrabold text-slate-900">Choose Entry Mode</h4>
+        <p class="text-xs text-slate-400 mt-0.5">Select how you want to record this transaction</p>
+      </div>
+
+      <div class="grid grid-cols-3 gap-2 text-center pt-2">
+        <!-- Image Mode -->
+        <button onclick="selectEntryMode('image')" class="p-3 rounded-2xl bg-orange-50 border border-orange-200/80 hover:bg-orange-100 transition flex flex-col items-center">
+          <span class="text-2xl mb-1">📸</span>
+          <span class="text-xs font-extrabold text-orange-900">Image</span>
+          <span class="text-[9px] text-orange-700/80 mt-0.5">Scan / Bill</span>
+        </button>
+
+        <!-- Voice Mode -->
+        <button onclick="selectEntryMode('voice')" class="p-3 rounded-2xl bg-indigo-50 border border-indigo-200/80 hover:bg-indigo-100 transition flex flex-col items-center">
+          <span class="text-2xl mb-1">🎙️</span>
+          <span class="text-xs font-extrabold text-indigo-900">Voice</span>
+          <span class="text-[9px] text-indigo-700/80 mt-0.5">Bol Kar Likhein</span>
+        </button>
+
+        <!-- Manual Mode -->
+        <button onclick="selectEntryMode('manual')" class="p-3 rounded-2xl bg-emerald-50 border border-emerald-200/80 hover:bg-emerald-100 transition flex flex-col items-center">
+          <span class="text-2xl mb-1">⌨️</span>
+          <span class="text-xs font-extrabold text-emerald-900">Manual</span>
+          <span class="text-[9px] text-emerald-700/80 mt-0.5">Type Karein</span>
+        </button>
+      </div>
+
+      <button onclick="submitQuickEntry()" class="w-full py-3 bg-slate-900 text-white rounded-xl text-xs font-bold hover:bg-black transition active:scale-95">
+        Confirm & Save Entry
+      </button>
     </div>
   </div>
 
