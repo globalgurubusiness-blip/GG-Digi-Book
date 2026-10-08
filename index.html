@@ -7,9 +7,16 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- Google Font -->
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+  <!-- jsPDF for PDF Statement Downloads -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+
   <style>
     body { font-family: 'Noto Sans', sans-serif; }
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
   </style>
+
   <!-- Firebase SDKs -->
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
@@ -17,10 +24,10 @@
       getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged 
     } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
     import { 
-      getFirestore, collection, addDoc, onSnapshot, query, where, doc, updateDoc 
+      getFirestore, collection, addDoc, onSnapshot, query, where, doc, updateDoc, deleteDoc 
     } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
-    // ✅ AAPKI FIREBASE CONFIGURATION (ALREADY CONFIGURED)
+    // Firebase Configuration
     const firebaseConfig = {
       apiKey: "AIzaSyBnzL_AKXDZFE6feQJf5XnasBqcLey0uOs",
       authDomain: "gg-digi-book.firebaseapp.com",
@@ -38,9 +45,13 @@
 
     let currentUser = null;
     let customersList = [];
+    let currentFilter = 'all';
     let selectedCustomer = null;
+    let currentTransactions = [];
+    let unsubscribeTx = null;
+    let attachedPhotoBase64 = "";
 
-    // Login State Listener
+    // Auth State
     onAuthStateChanged(auth, (user) => {
       currentUser = user;
       if (user) {
@@ -54,15 +65,12 @@
       }
     });
 
-    // Sign In & Sign Out
     window.loginGoogle = () => {
-      signInWithPopup(auth, provider).catch(err => {
-        alert("Login Error: " + err.message);
-      });
+      signInWithPopup(auth, provider).catch(err => alert("Login Error: " + err.message));
     };
     window.logout = () => signOut(auth);
 
-    // Load Logged-In User's Customers
+    // Load Customers Live
     function loadCustomers() {
       const q = query(collection(db, "customers"), where("userId", "==", currentUser.uid));
       onSnapshot(q, (snapshot) => {
@@ -85,45 +93,65 @@
       });
     }
 
-    // Render List
-    function renderCustomers() {
+    // Render Filtered Customers
+    window.renderCustomers = () => {
+      const searchVal = document.getElementById('search-input').value.toLowerCase();
       const listDiv = document.getElementById('customer-list');
       listDiv.innerHTML = '';
 
-      if (customersList.length === 0) {
-        listDiv.innerHTML = `<div class="p-10 text-center text-gray-400 font-medium">Abhi koi customer shamil nahi hai.<br>Neeche button se naya khata kholein.</div>`;
+      let filtered = customersList.filter(c => {
+        const matchesSearch = c.name.toLowerCase().includes(searchVal) || (c.phone && c.phone.includes(searchVal));
+        if (!matchesSearch) return false;
+        if (currentFilter === 'lena') return c.balance > 0;
+        if (currentFilter === 'dena') return c.balance < 0;
+        return true;
+      });
+
+      if (filtered.length === 0) {
+        listDiv.innerHTML = `<div class="p-12 text-center text-gray-400 text-sm font-medium">Koi customer nahi mila.<br>Naya khata shamil karein.</div>`;
         return;
       }
 
-      customersList.forEach(cust => {
+      filtered.forEach(cust => {
         const item = document.createElement('div');
-        item.className = "p-4 border-b flex justify-between items-center hover:bg-gray-50 active:bg-gray-100 cursor-pointer transition";
+        item.className = "p-4 border-b flex justify-between items-center hover:bg-gray-50 active:bg-gray-100 cursor-pointer transition select-none";
         item.onclick = () => openCustomerDetail(cust);
 
-        const isReceivable = cust.balance >= 0;
         item.innerHTML = `
           <div>
-            <h4 class="font-bold text-gray-900 text-base">${cust.name}</h4>
-            <p class="text-xs text-gray-500">${cust.phone || 'No Phone'}</p>
+            <h4 class="font-bold text-gray-900 text-base leading-tight">${cust.name}</h4>
+            <p class="text-xs text-gray-500 mt-0.5">${cust.phone || 'Phone mojood nahi'}</p>
           </div>
           <div class="text-right">
-            <span class="text-base font-bold ${isReceivable ? 'text-red-600' : 'text-emerald-600'}">
+            <span class="text-base font-extrabold ${cust.balance > 0 ? 'text-red-600' : cust.balance < 0 ? 'text-emerald-600' : 'text-gray-500'}">
               Rs. ${Math.abs(cust.balance || 0).toLocaleString()}
             </span>
-            <p class="text-[11px] font-semibold ${isReceivable ? 'text-red-500' : 'text-emerald-600'}">
-              ${isReceivable ? 'Maine Lena Hai' : 'Maine Dena Hai'}
+            <p class="text-[11px] font-semibold ${cust.balance > 0 ? 'text-red-500' : cust.balance < 0 ? 'text-emerald-600' : 'text-gray-400'}">
+              ${cust.balance > 0 ? 'Maine Lena Hai' : cust.balance < 0 ? 'Maine Dena Hai' : 'Hisaab Nil'}
             </p>
           </div>
         `;
         listDiv.appendChild(item);
       });
-    }
+    };
 
-    // Add New Customer
+    window.setFilter = (type) => {
+      currentFilter = type;
+      ['all', 'lena', 'dena'].forEach(f => {
+        const btn = document.getElementById(`filter-${f}`);
+        if (f === type) {
+          btn.className = "px-3 py-1.5 rounded-full text-xs font-bold bg-emerald-700 text-white shadow-sm transition";
+        } else {
+          btn.className = "px-3 py-1.5 rounded-full text-xs font-semibold bg-white text-gray-600 border border-gray-200 transition";
+        }
+      });
+      renderCustomers();
+    };
+
     window.addNewCustomer = async () => {
-      const name = prompt("Customer ka naam likhein:");
-      if (!name || name.trim() === "") return;
-      const phone = prompt("Customer ka Mobile Number (WhatsApp reminder ke liye):") || "";
+      const name = prompt("Customer ka naam:");
+      if (!name || !name.trim()) return;
+      const phone = prompt("Customer ka Mobile Number (WhatsApp ke liye):") || "";
 
       try {
         await addDoc(collection(db, "customers"), {
@@ -134,19 +162,84 @@
           createdAt: new Date().toISOString()
         });
       } catch (err) {
-        alert("Customer add karne mein masla hua: " + err.message);
+        alert("Khata banane mein masla hua: " + err.message);
       }
     };
 
-    // Customer Detail Modal
-    function openCustomerDetail(cust) {
+    window.openCustomerDetail = (cust) => {
       selectedCustomer = cust;
       document.getElementById('modal-cust-name').innerText = cust.name;
-      const statusText = cust.balance >= 0 ? 'Maine Lena Hai' : 'Maine Dena Hai';
-      document.getElementById('modal-cust-balance').innerText = `Baqi Balance: Rs. ${Math.abs(cust.balance || 0).toLocaleString()} (${statusText})`;
+      document.getElementById('modal-cust-phone').innerText = cust.phone || 'Phone number nahi hai';
+      updateModalBalanceUI();
+      clearPhotoAttachment();
       document.getElementById('tx-modal').classList.remove('hidden');
+      loadCustomerTransactions(cust.id);
+    };
+
+    function updateModalBalanceUI() {
+      const bal = selectedCustomer.balance || 0;
+      const statusText = bal > 0 ? 'Maine Lena Hai' : bal < 0 ? 'Maine Dena Hai' : 'Hisaab Saaf Hai';
+      const balEl = document.getElementById('modal-cust-balance');
+      balEl.innerText = `Rs. ${Math.abs(bal).toLocaleString()} (${statusText})`;
+      balEl.className = `text-sm font-bold ${bal > 0 ? 'text-red-600' : bal < 0 ? 'text-emerald-600' : 'text-gray-500'}`;
     }
-    window.closeModal = () => document.getElementById('tx-modal').classList.add('hidden');
+
+    function loadCustomerTransactions(customerId) {
+      const txListEl = document.getElementById('tx-history-list');
+      txListEl.innerHTML = '<p class="text-xs text-gray-400 text-center py-4">History load ho rahi hai...</p>';
+
+      if (unsubscribeTx) unsubscribeTx();
+
+      const q = query(collection(db, "transactions"), where("customerId", "==", customerId));
+      unsubscribeTx = onSnapshot(q, (snapshot) => {
+        currentTransactions = [];
+        snapshot.forEach(docSnap => {
+          currentTransactions.push({ id: docSnap.id, ...docSnap.data() });
+        });
+        currentTransactions.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+        renderTransactions();
+      });
+    }
+
+    function renderTransactions() {
+      const txListEl = document.getElementById('tx-history-list');
+      txListEl.innerHTML = '';
+
+      if (currentTransactions.length === 0) {
+        txListEl.innerHTML = '<p class="text-xs text-gray-400 text-center py-6">Abhi koi len den record nahi hua.</p>';
+        return;
+      }
+
+      currentTransactions.forEach(t => {
+        const row = document.createElement('div');
+        row.className = "flex justify-between items-center py-2.5 border-b border-gray-100 text-xs";
+        const dateStr = new Date(t.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+        const isDiye = t.type === 'diye';
+
+        const photoIcon = t.receiptImage ? `<button onclick="window.viewImage('${t.receiptImage}')" class="text-xs bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded border border-emerald-200 ml-1.5 font-bold">📷 Bill</button>` : '';
+
+        row.innerHTML = `
+          <div>
+            <div class="flex items-center">
+              <span class="font-bold text-gray-800">${t.note || (isDiye ? 'Udhaar Diya' : 'Raqam Wasool Hui')}</span>
+              ${photoIcon}
+            </div>
+            <p class="text-[10px] text-gray-400 mt-0.5">${dateStr}</p>
+          </div>
+          <div class="text-right">
+            <span class="font-extrabold ${isDiye ? 'text-red-600' : 'text-emerald-600'}">
+              ${isDiye ? '-' : '+'} Rs. ${Number(t.amount).toLocaleString()}
+            </span>
+          </div>
+        `;
+        txListEl.appendChild(row);
+      });
+    }
+
+    window.closeModal = () => {
+      document.getElementById('tx-modal').classList.add('hidden');
+      if (unsubscribeTx) unsubscribeTx();
+    };
 
     // Add Transaction
     window.addTransaction = async (type) => {
@@ -159,8 +252,6 @@
         return;
       }
 
-      // 'diye' = Udhaar Diya (Lena hai barh gaya)
-      // 'liye' = Wasool Huay (Lena hai kam ho gaya)
       const balanceDiff = (type === 'diye') ? amount : -amount;
       const newBal = (selectedCustomer.balance || 0) + balanceDiff;
 
@@ -175,37 +266,169 @@
           type: type,
           amount: amount,
           note: noteInput.value.trim(),
+          receiptImage: attachedPhotoBase64 || "",
           createdAt: new Date().toISOString()
         });
 
+        selectedCustomer.balance = newBal;
+        updateModalBalanceUI();
         amountInput.value = '';
         noteInput.value = '';
-        closeModal();
+        clearPhotoAttachment();
       } catch (err) {
         alert("Entry save nahi ho saki: " + err.message);
       }
     };
 
-    // Send WhatsApp Reminder
+    // Camera Image Compression & Attachment
+    window.handleReceiptUpload = (event) => {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          const maxDim = 800; // Compress to max 800px width/height
+          let width = img.width;
+          let height = img.height;
+
+          if (width > height && width > maxDim) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else if (height > maxDim) {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, width, height);
+
+          attachedPhotoBase64 = canvas.toDataURL('image/jpeg', 0.65);
+          document.getElementById('photo-preview-container').classList.remove('hidden');
+          document.getElementById('photo-preview-thumb').src = attachedPhotoBase64;
+        };
+        img.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    };
+
+    window.clearPhotoAttachment = () => {
+      attachedPhotoBase64 = "";
+      const input = document.getElementById('receipt-camera-input');
+      if (input) input.value = "";
+      document.getElementById('photo-preview-container').classList.add('hidden');
+    };
+
+    window.viewImage = (base64) => {
+      const w = window.open("");
+      w.document.write(`<img src="${base64}" style="max-width:100%; height:auto; margin:20px auto; display:block; border-radius:12px; box-shadow:0 10px 25px rgba(0,0,0,0.2);">`);
+    };
+
+    // Voice to Text (Urdu / English)
+    window.startSpeechRecognition = () => {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SpeechRecognition) {
+        alert("Aapka browser voice recognition support nahi karta. Chrome ya Safari use karein.");
+        return;
+      }
+
+      const recognition = new SpeechRecognition();
+      recognition.lang = 'ur-PK'; // Urdu (Pakistan)
+      const micBtn = document.getElementById('mic-btn');
+      micBtn.classList.add('bg-red-500', 'text-white', 'animate-pulse');
+
+      recognition.onresult = (event) => {
+        const transcript = event.results[0][0].transcript;
+        const noteInput = document.getElementById('tx-note');
+        noteInput.value = (noteInput.value ? noteInput.value + ' ' : '') + transcript;
+      };
+
+      recognition.onerror = () => {
+        // Fallback to English if Urdu fails
+        recognition.lang = 'en-US';
+      };
+
+      recognition.onend = () => {
+        micBtn.classList.remove('bg-red-500', 'text-white', 'animate-pulse');
+      };
+
+      recognition.start();
+    };
+
+    // Delete Customer
+    window.deleteCustomer = async () => {
+      if (!confirm(`Kya aap waqai ${selectedCustomer.name} ka khata delete karna chahte hain?`)) return;
+      try {
+        await deleteDoc(doc(db, "customers", selectedCustomer.id));
+        closeModal();
+      } catch (err) {
+        alert("Delete karne mein masla hua: " + err.message);
+      }
+    };
+
+    // WhatsApp Reminder
     window.sendWhatsApp = () => {
       if (!selectedCustomer || !selectedCustomer.phone) {
-        alert("Is customer ka phone number mojood nahi hai.");
+        alert("Customer ka mobile number mojood nahi hai.");
         return;
       }
       let phone = selectedCustomer.phone.replace(/[^0-9]/g, '');
       if (phone.startsWith('0')) phone = '92' + phone.substring(1);
 
-      const msg = `Assalam-o-Alaikum ${selectedCustomer.name} sahib, GG Digi Book khate ke mutabiq aap ka baqi hisaab Rs. ${selectedCustomer.balance} hai. Baraye meherbani jald clearance kar dein. Shukriya!`;
+      const bal = selectedCustomer.balance || 0;
+      const msg = `Assalam-o-Alaikum ${selectedCustomer.name} sahib,\nGG Digi Book khate ke mutabiq aap ka baqi hisaab Rs. ${Math.abs(bal).toLocaleString()} (${bal >= 0 ? 'Aap ne ada karna hai' : 'Hum ne ada karna hai'}) hai.\nBaraye meherbani tasdeeq karein. Shukriya!`;
       window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
+    };
+
+    // Download PDF
+    window.downloadPDF = () => {
+      const { jsPDF } = window.jspdf;
+      const pdf = new jsPDF();
+
+      pdf.setFontSize(18);
+      pdf.setTextColor(4, 120, 87);
+      pdf.text("GG Digi Book - Khata Statement", 14, 20);
+
+      pdf.setFontSize(11);
+      pdf.setTextColor(60, 60, 60);
+      pdf.text(`Customer Name: ${selectedCustomer.name}`, 14, 30);
+      pdf.text(`Phone: ${selectedCustomer.phone || 'N/A'}`, 14, 36);
+      pdf.text(`Tareekh: ${new Date().toLocaleDateString('en-GB')}`, 14, 42);
+
+      const balText = `Baqi Balance: Rs. ${Math.abs(selectedCustomer.balance || 0).toLocaleString()} (${selectedCustomer.balance >= 0 ? 'Maine Lena Hai' : 'Maine Dena Hai'})`;
+      pdf.setFontSize(12);
+      pdf.setTextColor(selectedCustomer.balance >= 0 ? 220 : 16, selectedCustomer.balance >= 0 ? 38 : 149, selectedCustomer.balance >= 0 ? 38 : 106);
+      pdf.text(balText, 14, 50);
+
+      const tableData = currentTransactions.map(t => [
+        new Date(t.createdAt).toLocaleDateString('en-GB'),
+        t.note || (t.type === 'diye' ? 'Udhaar Diya' : 'Wasool Huay'),
+        t.type === 'diye' ? `Rs. ${t.amount.toLocaleString()}` : '-',
+        t.type === 'liye' ? `Rs. ${t.amount.toLocaleString()}` : '-'
+      ]);
+
+      pdf.autoTable({
+        startY: 56,
+        head: [['Tareekh', 'Tafseel', 'Diye (Debit)', 'Liye (Credit)']],
+        body: tableData,
+        theme: 'striped',
+        headStyles: { fillColor: [4, 120, 87] }
+      });
+
+      pdf.save(`${selectedCustomer.name}_Ledger.pdf`);
     };
   </script>
 </head>
-<body class="bg-gray-100 min-h-screen select-none">
+<body class="bg-gray-100 min-h-screen select-none text-gray-800">
 
   <!-- 1. LOGIN SCREEN -->
   <div id="login-screen" class="flex flex-col items-center justify-center min-h-screen p-4">
     <div class="bg-white p-8 rounded-3xl shadow-xl max-w-sm w-full text-center border border-gray-100">
-    <img src="Logo.png.png" alt="GG Digi Book" class="w-20 h-20 rounded-2xl mx-auto mb-4 object-contain shadow-md">
+      <img src="logo.png" alt="GG Digi Book" class="w-24 h-24 rounded-full mx-auto mb-4 object-contain shadow-md bg-white p-1">
       <h2 class="text-2xl font-bold text-gray-900 mb-1">GG Digi Book</h2>
       <p class="text-xs text-gray-500 mb-6">Aapka digital udhaar bahi-khata. Har device par hamesha mehfooz.</p>
       
@@ -223,15 +446,15 @@
 
   <!-- 2. MAIN APP SCREEN -->
   <div id="app-screen" class="hidden max-w-md mx-auto bg-white min-h-screen shadow-xl flex flex-col">
-    <!-- Top Bar -->
+    <!-- Top Header -->
     <header class="bg-emerald-700 text-white p-4 flex justify-between items-center shadow sticky top-0 z-20">
-  <div class="flex items-center gap-2.5">
-  <img src="logo.png" alt="GG logo" class="w-9 h-9 rounded-lg bg-white p-0.5 object-contain shadow-sm">
-  <div>
-    <h1 class="text-base font-bold leading-tight">GG Digi Book</h1>
-    <p id="user-name" class="text-xs text-emerald-100 truncate max-w-[180px]"></p>
-  </div>
-</div>
+      <div class="flex items-center gap-2.5">
+        <img src="logo.png" alt="GG Logo" class="w-10 h-10 rounded-full bg-white p-0.5 object-contain shadow-sm">
+        <div>
+          <h1 class="text-base font-bold leading-tight">GG Digi Book</h1>
+          <p id="user-name" class="text-xs text-emerald-100 truncate max-w-[170px]"></p>
+        </div>
+      </div>
       <button onclick="logout()" class="text-xs bg-emerald-800 hover:bg-emerald-900 px-3 py-1.5 rounded-lg border border-emerald-600 transition">
         Logout
       </button>
@@ -249,6 +472,19 @@
       </div>
     </div>
 
+    <!-- Search & Filter Controls -->
+    <div class="p-3 bg-white border-b space-y-2.5">
+      <div class="relative">
+        <input type="text" id="search-input" oninput="renderCustomers()" placeholder="Customer dhoondein (naam ya number)..." class="w-full bg-gray-50 pl-9 pr-3 py-2 text-xs rounded-xl border border-gray-200 outline-none focus:ring-1 focus:ring-emerald-500">
+        <span class="absolute left-3 top-2.5 text-gray-400 text-xs">🔍</span>
+      </div>
+      <div class="flex gap-2">
+        <button id="filter-all" onclick="setFilter('all')" class="px-3 py-1.5 rounded-full text-xs font-bold bg-emerald-700 text-white shadow-sm transition">Sabhi</button>
+        <button id="filter-lena" onclick="setFilter('lena')" class="px-3 py-1.5 rounded-full text-xs font-semibold bg-white text-gray-600 border border-gray-200 transition">Lena Hai</button>
+        <button id="filter-dena" onclick="setFilter('dena')" class="px-3 py-1.5 rounded-full text-xs font-semibold bg-white text-gray-600 border border-gray-200 transition">Dena Hai</button>
+      </div>
+    </div>
+
     <!-- Customer List -->
     <div id="customer-list" class="flex-1 overflow-y-auto divide-y divide-gray-100"></div>
 
@@ -260,40 +496,83 @@
     </div>
   </div>
 
-  <!-- 3. TRANSACTION MODAL -->
+  <!-- 3. CUSTOMER LEDGER & TRANSACTION MODAL -->
   <div id="tx-modal" class="hidden fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center">
-    <div class="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl p-6 shadow-2xl animate-in">
-      <div class="flex justify-between items-start mb-4">
+    <div class="bg-white w-full max-w-md max-h-[92vh] rounded-t-3xl sm:rounded-3xl p-5 shadow-2xl flex flex-col animate-in overflow-hidden">
+      
+      <!-- Modal Header -->
+      <div class="flex justify-between items-start pb-3 border-b">
         <div>
-          <h3 id="modal-cust-name" class="text-xl font-bold text-gray-900"></h3>
-          <p id="modal-cust-balance" class="text-xs font-semibold text-gray-600 mt-0.5"></p>
+          <h3 id="modal-cust-name" class="text-lg font-bold text-gray-900 leading-tight"></h3>
+          <p id="modal-cust-phone" class="text-xs text-gray-400 mt-0.5"></p>
+          <div id="modal-cust-balance" class="mt-1"></div>
         </div>
-        <button onclick="closeModal()" class="text-gray-400 hover:text-gray-700 text-2xl font-bold leading-none p-1">&times;</button>
+        <div class="flex items-center gap-2">
+          <button onclick="deleteCustomer()" title="Khata Khatam Karein" class="text-red-500 hover:bg-red-50 p-2 rounded-lg text-sm">🗑️</button>
+          <button onclick="closeModal()" class="text-gray-400 hover:text-gray-700 text-2xl font-bold leading-none p-1">&times;</button>
+        </div>
       </div>
 
-      <div class="mb-3">
-        <label class="block text-xs font-bold text-gray-700 mb-1">Raqam (Rs.)</label>
-        <input type="number" id="tx-amount" placeholder="0" class="w-full text-2xl font-black p-3.5 border border-gray-200 rounded-2xl focus:ring-2 focus:ring-emerald-500 outline-none">
+      <!-- Transaction History Scrollable -->
+      <div class="flex-1 overflow-y-auto my-3 pr-1">
+        <h5 class="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-2">Len Den Record</h5>
+        <div id="tx-history-list" class="space-y-1"></div>
       </div>
 
-      <div class="mb-5">
-        <label class="block text-xs font-bold text-gray-700 mb-1">Tafseel / Description (Optional)</label>
-        <input type="text" id="tx-note" placeholder="Maslan: Saman udhaar liya / cash wasool" class="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none text-sm">
+      <!-- Entry Form -->
+      <div class="pt-3 border-t bg-gray-50 -mx-5 -mb-5 p-5 rounded-b-3xl space-y-3">
+        
+        <!-- Photo Preview Banner -->
+        <div id="photo-preview-container" class="hidden flex items-center justify-between bg-emerald-50 border border-emerald-200 p-2 rounded-xl">
+          <div class="flex items-center gap-2">
+            <img id="photo-preview-thumb" class="w-8 h-8 rounded object-cover border border-emerald-300" src="">
+            <span class="text-xs font-semibold text-emerald-800">Bill Photo Attached ✅</span>
+          </div>
+          <button onclick="clearPhotoAttachment()" class="text-xs text-red-600 font-bold px-2 py-1 hover:bg-red-50 rounded">Hataein</button>
+        </div>
+
+        <div class="grid grid-cols-2 gap-2">
+          <input type="number" id="tx-amount" placeholder="Raqam (Rs.)" class="w-full text-base font-bold p-2.5 bg-white border border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none">
+          
+          <!-- Note with Mic and Camera -->
+          <div class="relative flex items-center">
+            <input type="text" id="tx-note" placeholder="Tafseel / Note" class="w-full text-xs p-2.5 pr-14 bg-white border border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none">
+            
+            <div class="absolute right-1.5 flex items-center gap-1">
+              <!-- Mic Button (Speech-to-Text) -->
+              <button id="mic-btn" onclick="startSpeechRecognition()" title="Bol kar likhein" class="p-1 rounded-lg text-gray-500 hover:text-emerald-700 hover:bg-gray-100 text-sm transition">
+                🎙️
+              </button>
+              
+              <!-- Camera / Photo Button -->
+              <label for="receipt-camera-input" title="Bill ki picture lein" class="p-1 rounded-lg text-gray-500 hover:text-emerald-700 hover:bg-gray-100 text-sm cursor-pointer transition">
+                📸
+              </label>
+              <input id="receipt-camera-input" type="file" accept="image/*" capture="environment" onchange="handleReceiptUpload(event)" class="hidden">
+            </div>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-2">
+          <button onclick="addTransaction('diye')" class="py-2.5 bg-red-600 hover:bg-red-700 active:scale-95 text-white text-xs font-bold rounded-xl shadow transition">
+            - Diye (Udhaar)
+          </button>
+          <button onclick="addTransaction('liye')" class="py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-bold rounded-xl shadow transition">
+            + Liye (Wasooli)
+          </button>
+        </div>
+
+        <!-- Quick Share / Actions -->
+        <div class="grid grid-cols-2 gap-2 pt-1">
+          <button onclick="sendWhatsApp()" class="py-2 bg-emerald-50 text-emerald-700 border border-emerald-300 font-bold rounded-xl flex items-center justify-center gap-1.5 text-xs hover:bg-emerald-100 transition">
+            <span>💬</span> WhatsApp
+          </button>
+          <button onclick="downloadPDF()" class="py-2 bg-gray-100 text-gray-700 border border-gray-300 font-bold rounded-xl flex items-center justify-center gap-1.5 text-xs hover:bg-gray-200 transition">
+            <span>📄</span> PDF Statement
+          </button>
+        </div>
       </div>
 
-      <!-- Action Buttons -->
-      <div class="grid grid-cols-2 gap-3 mb-3">
-        <button onclick="addTransaction('diye')" class="py-3.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl shadow transition">
-          Maine Diye (-)
-        </button>
-        <button onclick="addTransaction('liye')" class="py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow transition">
-          Maine Liye (+)
-        </button>
-      </div>
-
-      <button onclick="sendWhatsApp()" class="w-full py-2.5 border border-emerald-600 text-emerald-700 font-bold rounded-xl flex items-center justify-center gap-2 hover:bg-emerald-50 transition text-sm">
-        WhatsApp Reminder Bhejein
-      </button>
     </div>
   </div>
 
