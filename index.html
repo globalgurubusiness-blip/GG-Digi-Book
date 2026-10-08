@@ -23,7 +23,7 @@
       getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged 
     } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
     import { 
-      getFirestore, collection, addDoc, onSnapshot, query, where, doc, updateDoc, deleteDoc, getDocs, writeBatch 
+      getFirestore, collection, addDoc, onSnapshot, query, where, doc, updateDoc, deleteDoc, getDocs 
     } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
     const firebaseConfig = {
@@ -427,7 +427,7 @@
       if (unsubscribeTx) unsubscribeTx();
     };
 
-    // Reference App Feature: Open Entry Mode Picker (Image, Voice, Manual)
+    // Entry Mode Sheet Trigger
     window.openEntrySheet = (type) => {
       playSound('tap');
       pendingEntryType = type;
@@ -443,7 +443,7 @@
     };
 
     window.selectEntryMode = (mode) => {
-      closeEntrySheet();
+      closeEntrySheet(); // Turant pop-up sheet hide hogi
       if (mode === 'image') {
         document.getElementById('receipt-camera-input').click();
       } else if (mode === 'voice') {
@@ -454,6 +454,7 @@
     };
 
     window.submitQuickEntry = () => {
+      closeEntrySheet(); // Confirm dabate hi sheet hide hogi
       addTransaction(pendingEntryType);
     };
 
@@ -636,7 +637,7 @@
       pdf.save(`${selectedCustomer.name}_Ledger.pdf`);
     };
 
-    // PAGE 2: EXACT SINGLE-BOX GALLA AUDIT MATCH (No Notes Counting)
+    // PAGE 2: SINGLE-BOX GALLA AUDIT
     window.calculateSingleGallaAudit = () => {
       const gallaInputVal = parseFloat(document.getElementById('single-galla-amount').value) || 0;
       document.getElementById('total-physical-cash').innerText = `Rs. ${gallaInputVal.toLocaleString()}`;
@@ -671,10 +672,10 @@
       calculateSingleGallaAudit();
     };
 
-    // DUAL BACKUP HANDLER
+    // DUAL BACKUP HANDLER (CSV + JSON)
     window.downloadBackup = async () => {
       playSound('tap');
-      const choice = prompt("Select Backup Format:\n1 = Excel Sheet (.CSV)\n2 = JSON Backup (.JSON - Useful to shift to another email)\n\nType 1 or 2 below:", "1");
+      const choice = prompt("Select Backup Format:\n1 = Excel Sheet (.CSV)\n2 = JSON Backup (.JSON - For Shifting Account)\n\nType 1 or 2 below:", "1");
       
       if (!choice || (choice !== "1" && choice !== "2")) {
         return;
@@ -764,7 +765,7 @@
       const file = event.target.files[0];
       if (!file) return;
 
-      const confirmRestore = confirm("Are you sure you want to import this ledger backup into your current account? Existing and new data will be synced safely.");
+      const confirmRestore = confirm("Are you sure you want to import this ledger backup into your current account? Data will be synced safely.");
       if (!confirmRestore) {
         event.target.value = "";
         return;
@@ -915,7 +916,7 @@
       </div>
     </div>
 
-    <!-- PAGE 2: GALLA CASH & ACCOUNTS CROSS-CHECK (Single Direct Amount Match) -->
+    <!-- PAGE 2: GALLA CASH & ACCOUNTS CROSS-CHECK -->
     <div id="view-accounts" class="hidden flex-1 p-4 pb-20 space-y-4 overflow-y-auto bg-slate-50/70">
       
       <!-- Top Overview Audit Banner -->
@@ -957,7 +958,7 @@
       <div class="bg-white p-5 rounded-3xl border border-slate-200/80 shadow-sm space-y-3">
         <div>
           <h4 class="text-xs font-extrabold text-slate-800 uppercase tracking-wider">Enter Physical Galla Cash</h4>
-          <p class="text-[11px] text-slate-400 mt-0.5">Apne galle me mojood kul raqam (Total Amount) yahan likhein taake foran cross-check ho sake:</p>
+          <p class="text-[11px] text-slate-400 mt-0.5">Apne galle me mojood kul raqam (Total Amount) yahan likhein:</p>
         </div>
 
         <div class="relative">
@@ -966,7 +967,7 @@
         </div>
 
         <div class="p-3 bg-emerald-50/60 rounded-xl border border-emerald-100 text-[11px] text-emerald-900">
-          💡 <strong>Tip:</strong> Notes alag alag gin'ny ki zaroorat nahi. Sirf gally ka total daalein aur check karein ke balance barabar hai ya koi farq aa raha hai.
+          💡 <strong>Tip:</strong> Notes alag alag gin'ny ki zaroorat nahi. Sirf gally ka total daalein aur check karein ke balance barabar hai ya koi farq hai.
         </div>
       </div>
 
@@ -1041,7 +1042,7 @@
           </span>
         </a>
 
-        <!-- Social Media Grid Icons -->
+        <!-- Social Media Grid Icons (Exact Direct Handles) -->
         <div>
           <p class="text-[11px] font-bold text-slate-500 mb-2.5">Connect Across Platforms</p>
           <div class="grid grid-cols-5 gap-2">
@@ -1174,7 +1175,7 @@
           </div>
         </div>
 
-        <!-- Reference App Cash In / Cash Out Action Buttons -->
+        <!-- Cash In / Cash Out Action Buttons -->
         <div class="grid grid-cols-2 gap-2">
           <button onclick="openEntrySheet('diye')" class="py-2.5 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white text-xs font-bold rounded-xl shadow-md shadow-rose-600/10 transition flex items-center justify-center gap-1.5">
             <span>🔴</span> CASH OUT
@@ -1197,7 +1198,7 @@
     </div>
   </div>
 
-  <!-- 5. ENTRY MODE MODAL (Reference App: Image / Voice / Manual) -->
+  <!-- 5. ENTRY MODE MODAL (Auto Closes on Select/Enter) -->
   <div id="entry-mode-sheet" onclick="closeEntrySheet()" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
     <div onclick="event.stopPropagation()" class="bg-white w-full max-w-sm rounded-t-3xl sm:rounded-3xl p-5 shadow-2xl space-y-4">
       <div class="text-center">
