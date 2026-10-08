@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="ur" dir="ltr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GG Digi Book - Udhaar Khata</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Google Font -->
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Noto Sans', sans-serif; }
+  </style>
+  <!-- Firebase SDKs -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+    import { 
+      getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged 
+    } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+    import { 
+      getFirestore, collection, addDoc, onSnapshot, query, where, doc, updateDoc 
+    } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+    // ✅ AAPKI FIREBASE CONFIGURATION (ALREADY CONFIGURED)
+    const firebaseConfig = {
+      apiKey: "AIzaSyBnzL_AKXDZFE6feQJf5XnasBqcLey0uOs",
+      authDomain: "gg-digi-book.firebaseapp.com",
+      projectId: "gg-digi-book",
+      storageBucket: "gg-digi-book.firebasestorage.app",
+      messagingSenderId: "384507968962",
+      appId: "1:384507968962:web:89df71ed5ed5bc8656aa5b",
+      measurementId: "G-491D264LFB"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+    const provider = new GoogleAuthProvider();
+
+    let currentUser = null;
+    let customersList = [];
+    let selectedCustomer = null;
+
+    // Login State Listener
+    onAuthStateChanged(auth, (user) => {
+      currentUser = user;
+      if (user) {
+        document.getElementById('login-screen').classList.add('hidden');
+        document.getElementById('app-screen').classList.remove('hidden');
+        document.getElementById('user-name').innerText = user.displayName || user.email;
+        loadCustomers();
+      } else {
+        document.getElementById('login-screen').classList.remove('hidden');
+        document.getElementById('app-screen').classList.add('hidden');
+      }
+    });
+
+    // Sign In & Sign Out
+    window.loginGoogle = () => {
+      signInWithPopup(auth, provider).catch(err => {
+        alert("Login Error: " + err.message);
+      });
+    };
+    window.logout = () => signOut(auth);
+
+    // Load Logged-In User's Customers
+    function loadCustomers() {
+      const q = query(collection(db, "customers"), where("userId", "==", currentUser.uid));
+      onSnapshot(q, (snapshot) => {
+        customersList = [];
+        let totalReceivable = 0;
+        let totalPayable = 0;
+
+        snapshot.forEach((docSnap) => {
+          const data = { id: docSnap.id, ...docSnap.data() };
+          customersList.push(data);
+          if (data.balance > 0) totalReceivable += data.balance;
+          if (data.balance < 0) totalPayable += Math.abs(data.balance);
+        });
+
+        document.getElementById('total-lena').innerText = `Rs. ${totalReceivable.toLocaleString()}`;
+        document.getElementById('total-dena').innerText = `Rs. ${totalPayable.toLocaleString()}`;
+        renderCustomers();
+      }, (err) => {
+        console.error("Firestore Error:", err);
+      });
+    }
+
+    // Render List
+    function renderCustomers() {
+      const listDiv = document.getElementById('customer-list');
+      listDiv.innerHTML = '';
+
+      if (customersList.length === 0) {
+        listDiv.innerHTML = `<div class="p-10 text-center text-gray-400 font-medium">Abhi koi customer shamil nahi hai.<br>Neeche button se naya khata kholein.</div>`;
+        return;
+      }
+
+      customersList.forEach(cust => {
+        const item = document.createElement('div');
+        item.className = "p-4 border-b flex justify-between items-center hover:bg-gray-50 active:bg-gray-100 cursor-pointer transition";
+        item.onclick = () => openCustomerDetail(cust);
+
+        const isReceivable = cust.balance >= 0;
+        item.innerHTML = `
+          <div>
+            <h4 class="font-bold text-gray-900 text-base">${cust.name}</h4>
+            <p class="text-xs text-gray-500">${cust.phone || 'No Phone'}</p>
+          </div>
+          <div class="text-right">
+            <span class="text-base font-bold ${isReceivable ? 'text-red-600' : 'text-emerald-600'}">
+              Rs. ${Math.abs(cust.balance || 0).toLocaleString()}
+            </span>
+            <p class="text-[11px] font-semibold ${isReceivable ? 'text-red-500' : 'text-emerald-600'}">
+              ${isReceivable ? 'Maine Lena Hai' : 'Maine Dena Hai'}
+            </p>
+          </div>
+        `;
+        listDiv.appendChild(item);
+      });
+    }
+
+    // Add New Customer
+    window.addNewCustomer = async () => {
+      const name = prompt("Customer ka naam likhein:");
+      if (!name || name.trim() === "") return;
+      const phone = prompt("Customer ka Mobile Number (WhatsApp reminder ke liye):") || "";
+
+      try {
+        await addDoc(collection(db, "customers"), {
+          userId: currentUser.uid,
+          name: name.trim(),
+          phone: phone.trim(),
+          balance: 0,
+          createdAt: new Date().toISOString()
+        });
+      } catch (err) {
+        alert("Customer add karne mein masla hua: " + err.message);
+      }
+    };
+
+    // Customer Detail Modal
+    function openCustomerDetail(cust) {
+      selectedCustomer = cust;
+      document.getElementById('modal-cust-name').innerText = cust.name;
+      const statusText = cust.balance >= 0 ? 'Maine Lena Hai' : 'Maine Dena Hai';
+      document.getElementById('modal-cust-balance').innerText = `Baqi Balance: Rs. ${Math.abs(cust.balance || 0).toLocaleString()} (${statusText})`;
+      document.getElementById('tx-modal').classList.remove('hidden');
+    }
+    window.closeModal = () => document.getElementById('tx-modal').classList.add('hidden');
+
+    // Add Transaction
+    window.addTransaction = async (type) => {
+      const amountInput = document.getElementById('tx-amount');
+      const noteInput = document.getElementById('tx-note');
+      const amount = parseFloat(amountInput.value);
+
+      if (!amount || amount <= 0) {
+        alert("Durust raqam darj karein");
+        return;
+      }
+
+      // 'diye' = Udhaar Diya (Lena hai barh gaya)
+      // 'liye' = Wasool Huay (Lena hai kam ho gaya)
+      const balanceDiff = (type === 'diye') ? amount : -amount;
+      const newBal = (selectedCustomer.balance || 0) + balanceDiff;
+
+      try {
+        await updateDoc(doc(db, "customers", selectedCustomer.id), {
+          balance: newBal
+        });
+
+        await addDoc(collection(db, "transactions"), {
+          userId: currentUser.uid,
+          customerId: selectedCustomer.id,
+          type: type,
+          amount: amount,
+          note: noteInput.value.trim(),
+          createdAt: new Date().toISOString()
+        });
+
+        amountInput.value = '';
+        noteInput.value = '';
+        closeModal();
+      } catch (err) {
+        alert("Entry save nahi ho saki: " + err.message);
+      }
+    };
+
+    // Send WhatsApp Reminder
+    window.sendWhatsApp = () => {
+      if (!selectedCustomer || !selectedCustomer.phone) {
+        alert("Is customer ka phone number mojood nahi hai.");
+        return;
+      }
+      let phone = selectedCustomer.phone.replace(/[^0-9]/g, '');
+      if (phone.startsWith('0')) phone = '92' + phone.substring(1);
+
+      const msg = `Assalam-o-Alaikum ${selectedCustomer.name} sahib, GG Digi Book khate ke mutabiq aap ka baqi hisaab Rs. ${selectedCustomer.balance} hai. Baraye meherbani jald clearance kar dein. Shukriya!`;
+      window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
+    };
+  </script>
+</head>
+<body class="bg-gray-100 min-h-screen select-none">
+
+  <!-- 1. LOGIN SCREEN -->
+  <div id="login-screen" class="flex flex-col items-center justify-center min-h-screen p-4">
+    <div class="bg-white p-8 rounded-3xl shadow-xl max-w-sm w-full text-center border border-gray-100">
+      <div class="w-16 h-16 bg-emerald-600 rounded-2xl flex items-center justify-center text-white text-2xl font-black mx-auto mb-4 shadow-md">
+        GG
+      </div>
+      <h2 class="text-2xl font-bold text-gray-900 mb-1">GG Digi Book</h2>
+      <p class="text-xs text-gray-500 mb-6">Aapka digital udhaar bahi-khata. Har device par hamesha mehfooz.</p>
+      
+      <button onclick="loginGoogle()" class="w-full py-3.5 px-4 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 font-semibold rounded-2xl shadow-sm flex items-center justify-center gap-3 transition">
+        <svg class="w-5 h-5" viewBox="0 0 24 24">
+          <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+          <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+          <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
+          <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
+        </svg>
+        Google Se Login Karein
+      </button>
+    </div>
+  </div>
+
+  <!-- 2. MAIN APP SCREEN -->
+  <div id="app-screen" class="hidden max-w-md mx-auto bg-white min-h-screen shadow-xl flex flex-col">
+    <!-- Top Bar -->
+    <header class="bg-emerald-700 text-white p-4 flex justify-between items-center shadow sticky top-0 z-20">
+      <div>
+        <h1 class="text-lg font-bold tracking-tight">GG Digi Book</h1>
+        <p id="user-name" class="text-xs text-emerald-200 truncate max-w-[180px]"></p>
+      </div>
+      <button onclick="logout()" class="text-xs bg-emerald-800 hover:bg-emerald-900 px-3 py-1.5 rounded-lg border border-emerald-600 transition">
+        Logout
+      </button>
+    </header>
+
+    <!-- Lena / Dena Card -->
+    <div class="grid grid-cols-2 gap-3 p-4 bg-emerald-50/70 border-b">
+      <div class="bg-white p-3 rounded-2xl border border-red-100 shadow-sm">
+        <p class="text-xs font-semibold text-gray-500 mb-1">Maine Lena Hai</p>
+        <h3 id="total-lena" class="text-lg font-black text-red-600">Rs. 0</h3>
+      </div>
+      <div class="bg-white p-3 rounded-2xl border border-emerald-100 shadow-sm">
+        <p class="text-xs font-semibold text-gray-500 mb-1">Maine Dena Hai</p>
+        <h3 id="total-dena" class="text-lg font-black text-emerald-600">Rs. 0</h3>
+      </div>
+    </div>
+
+    <!-- Customer List -->
+    <div id="customer-list" class="flex-1 overflow-y-auto divide-y divide-gray-100"></div>
+
+    <!-- Add Button Bottom Bar -->
+    <div class="p-4 border-t sticky bottom-0 bg-white">
+      <button onclick="addNewCustomer()" class="w-full py-3.5 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white font-bold rounded-2xl shadow-lg flex items-center justify-center gap-2 transition">
+        <span class="text-xl leading-none">+</span> Naya Customer Shamil Karein
+      </button>
+    </div>
+  </div>
+
+  <!-- 3. TRANSACTION MODAL -->
+  <div id="tx-modal" class="hidden fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center">
+    <div class="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl p-6 shadow-2xl animate-in">
+      <div class="flex justify-between items-start mb-4">
+        <div>
+          <h3 id="modal-cust-name" class="text-xl font-bold text-gray-900"></h3>
+          <p id="modal-cust-balance" class="text-xs font-semibold text-gray-600 mt-0.5"></p>
+        </div>
+        <button onclick="closeModal()" class="text-gray-400 hover:text-gray-700 text-2xl font-bold leading-none p-1">&times;</button>
+      </div>
+
+      <div class="mb-3">
+        <label class="block text-xs font-bold text-gray-700 mb-1">Raqam (Rs.)</label>
+        <input type="number" id="tx-amount" placeholder="0" class="w-full text-2xl font-black p-3.5 border border-gray-200 rounded-2xl focus:ring-2 focus:ring-emerald-500 outline-none">
+      </div>
+
+      <div class="mb-5">
+        <label class="block text-xs font-bold text-gray-700 mb-1">Tafseel / Description (Optional)</label>
+        <input type="text" id="tx-note" placeholder="Maslan: Saman udhaar liya / cash wasool" class="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none text-sm">
+      </div>
+
+      <!-- Action Buttons -->
+      <div class="grid grid-cols-2 gap-3 mb-3">
+        <button onclick="addTransaction('diye')" class="py-3.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl shadow transition">
+          Maine Diye (-)
+        </button>
+        <button onclick="addTransaction('liye')" class="py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow transition">
+          Maine Liye (+)
+        </button>
+      </div>
+
+      <button onclick="sendWhatsApp()" class="w-full py-2.5 border border-emerald-600 text-emerald-700 font-bold rounded-xl flex items-center justify-center gap-2 hover:bg-emerald-50 transition text-sm">
+        WhatsApp Reminder Bhejein
+      </button>
+    </div>
+  </div>
+
+</body>
+</html>
