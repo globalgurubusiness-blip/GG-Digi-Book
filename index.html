@@ -225,10 +225,13 @@
   <div id="app-screen" class="hidden max-w-md mx-auto bg-white min-h-screen shadow-xl flex flex-col">
     <!-- Top Bar -->
     <header class="bg-emerald-700 text-white p-4 flex justify-between items-center shadow sticky top-0 z-20">
-      <div>
-        <h1 class="text-lg font-bold tracking-tight">GG Digi Book</h1>
-        <p id="user-name" class="text-xs text-emerald-200 truncate max-w-[180px]"></p>
-      </div>
+  <div class="flex items-center gap-2.5">
+  <img src="Logo.png.png" alt="GG Logo" class="w-9 h-9 rounded-lg bg-white p-0.5 object-contain shadow-sm">
+  <div>
+    <h1 class="text-base font-bold leading-tight">GG Digi Book</h1>
+    <p id="user-name" class="text-xs text-emerald-100 truncate max-w-[180px]"></p>
+  </div>
+</div>
       <button onclick="logout()" class="text-xs bg-emerald-800 hover:bg-emerald-900 px-3 py-1.5 rounded-lg border border-emerald-600 transition">
         Logout
       </button>
