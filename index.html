@@ -67,12 +67,10 @@
         const now = ctx.currentTime;
 
         if (type === 'credit') {
-          // Cash Register Ding
           const osc1 = ctx.createOscillator();
           const osc2 = ctx.createOscillator();
           const gain = ctx.createGain();
-          osc1.type = 'sine';
-          osc2.type = 'triangle';
+          osc1.type = 'sine'; osc2.type = 'triangle';
           osc1.frequency.setValueAtTime(880, now);
           osc1.frequency.exponentialRampToValueAtTime(1760, now + 0.15);
           osc2.frequency.setValueAtTime(1320, now);
@@ -81,9 +79,7 @@
           osc1.connect(gain); osc2.connect(gain); gain.connect(ctx.destination);
           osc1.start(); osc2.start();
           osc1.stop(now + 0.35); osc2.stop(now + 0.35);
-
         } else if (type === 'debit') {
-          // Cash Debit Tone
           const osc = ctx.createOscillator();
           const gain = ctx.createGain();
           osc.type = 'sine';
@@ -93,9 +89,7 @@
           gain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
           osc.connect(gain); gain.connect(ctx.destination);
           osc.start(); osc.stop(now + 0.2);
-
         } else if (type === 'tap') {
-          // UI Tap
           const osc = ctx.createOscillator();
           const gain = ctx.createGain();
           osc.type = 'sine';
@@ -104,9 +98,7 @@
           gain.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
           osc.connect(gain); gain.connect(ctx.destination);
           osc.start(); osc.stop(now + 0.05);
-
         } else if (type === 'close') {
-          // Modal Dismiss Tone
           const osc = ctx.createOscillator();
           const gain = ctx.createGain();
           osc.type = 'sine';
@@ -116,21 +108,17 @@
           gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
           osc.connect(gain); gain.connect(ctx.destination);
           osc.start(); osc.stop(now + 0.1);
-
         } else if (type === 'success') {
-          // Happy Double Chime
           const osc = ctx.createOscillator();
           const gain = ctx.createGain();
           osc.type = 'triangle';
-          osc.frequency.setValueAtTime(523.25, now); // C5
-          osc.frequency.setValueAtTime(659.25, now + 0.08); // E5
+          osc.frequency.setValueAtTime(523.25, now);
+          osc.frequency.setValueAtTime(659.25, now + 0.08);
           gain.gain.setValueAtTime(0.18, now);
           gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
           osc.connect(gain); gain.connect(ctx.destination);
           osc.start(); osc.stop(now + 0.25);
-
         } else if (type === 'delete') {
-          // Warning Delete Blip
           const osc = ctx.createOscillator();
           const gain = ctx.createGain();
           osc.type = 'sawtooth';
@@ -140,21 +128,17 @@
           gain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
           osc.connect(gain); gain.connect(ctx.destination);
           osc.start(); osc.stop(now + 0.18);
-
         } else if (type === 'download') {
-          // PDF / Backup Complete Ping
           const osc = ctx.createOscillator();
           const gain = ctx.createGain();
           osc.type = 'sine';
-          osc.frequency.setValueAtTime(784, now); // G5
-          osc.frequency.exponentialRampToValueAtTime(1046.5, now + 0.12); // C6
+          osc.frequency.setValueAtTime(784, now);
+          osc.frequency.exponentialRampToValueAtTime(1046.5, now + 0.12);
           gain.gain.setValueAtTime(0.2, now);
           gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
           osc.connect(gain); gain.connect(ctx.destination);
           osc.start(); osc.stop(now + 0.3);
-
         } else if (type === 'mic') {
-          // Voice Mic Beep
           const osc = ctx.createOscillator();
           const gain = ctx.createGain();
           osc.type = 'sine';
@@ -175,6 +159,8 @@
         document.getElementById('login-screen').classList.add('hidden');
         document.getElementById('app-screen').classList.remove('hidden');
         document.getElementById('user-name').innerText = user.displayName || user.email;
+        document.getElementById('settings-user-email').innerText = user.email || 'N/A';
+        document.getElementById('settings-user-name').innerText = user.displayName || 'Authorized User';
         loadCustomers();
       } else {
         document.getElementById('login-screen').classList.remove('hidden');
@@ -190,6 +176,26 @@
     window.logout = () => {
       playSound('tap');
       signOut(auth);
+    };
+
+    window.switchTab = (tab) => {
+      playSound('tap');
+      const ledgerView = document.getElementById('view-ledger');
+      const settingsView = document.getElementById('view-settings');
+      const tabLedgerBtn = document.getElementById('tab-btn-ledger');
+      const tabSettingsBtn = document.getElementById('tab-btn-settings');
+
+      if (tab === 'ledger') {
+        ledgerView.classList.remove('hidden');
+        settingsView.classList.add('hidden');
+        tabLedgerBtn.className = "flex-1 py-3 text-center text-emerald-700 font-extrabold text-xs flex flex-col items-center gap-1 border-t-2 border-emerald-600 transition";
+        tabSettingsBtn.className = "flex-1 py-3 text-center text-slate-400 font-semibold text-xs flex flex-col items-center gap-1 border-t-2 border-transparent hover:text-slate-600 transition";
+      } else {
+        ledgerView.classList.add('hidden');
+        settingsView.classList.remove('hidden');
+        tabSettingsBtn.className = "flex-1 py-3 text-center text-emerald-700 font-extrabold text-xs flex flex-col items-center gap-1 border-t-2 border-emerald-600 transition";
+        tabLedgerBtn.className = "flex-1 py-3 text-center text-slate-400 font-semibold text-xs flex flex-col items-center gap-1 border-t-2 border-transparent hover:text-slate-600 transition";
+      }
     };
 
     function loadCustomers() {
@@ -409,7 +415,6 @@
         return;
       }
 
-      // Audio Trigger
       playSound(type === 'diye' ? 'debit' : 'credit');
 
       const balanceDiff = (type === 'diye') ? amount : -amount;
@@ -432,8 +437,6 @@
         amountInput.value = '';
         noteInput.value = '';
         clearPhotoAttachment();
-
-        // Auto close after entry
         closeModal();
       } catch (err) {
         alert("Error saving transaction: " + err.message);
@@ -581,7 +584,15 @@
       pdf.save(`${selectedCustomer.name}_Ledger.pdf`);
     };
 
+    // Dual Backup Handler
     window.downloadBackup = async () => {
+      playSound('tap');
+      const choice = prompt("Select Backup Format:\n1 = Excel Sheet (.CSV)\n2 = JSON Backup (.JSON)\n\nType 1 or 2 below:", "1");
+      
+      if (!choice || (choice !== "1" && choice !== "2")) {
+        return;
+      }
+
       playSound('download');
       try {
         const qCust = query(collection(db, "customers"), where("userId", "==", currentUser.uid));
@@ -592,24 +603,65 @@
           getDocs(qTx)
         ]);
 
-        const backupData = {
-          exportDate: new Date().toISOString(),
-          user: currentUser.email,
-          totalCustomers: custSnap.docs.length,
-          totalTransactions: txSnap.docs.length,
-          customers: custSnap.docs.map(d => ({ id: d.id, ...d.data() })),
-          transactions: txSnap.docs.map(d => ({ id: d.id, ...d.data() }))
-        };
+        const dateStr = new Date().toISOString().slice(0, 10);
 
-        const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: "application/json" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `GG_DigiBook_Backup_${new Date().toISOString().slice(0, 10)}.json`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+        if (choice === "1") {
+          const customersMap = {};
+          custSnap.docs.forEach(d => {
+            customersMap[d.id] = d.data();
+          });
+
+          let csv = "Transaction ID,Date,Customer Name,Phone,Type,Given Debit,Received Credit,Note\n";
+
+          txSnap.docs.forEach(d => {
+            const t = d.data();
+            const cust = customersMap[t.customerId] || { name: "Unknown", phone: "" };
+            const dt = new Date(t.createdAt).toLocaleString('en-GB');
+            const type = t.type === 'diye' ? 'Gave (Debit)' : 'Got (Credit)';
+            const debit = t.type === 'diye' ? t.amount : 0;
+            const credit = t.type === 'liye' ? t.amount : 0;
+            const note = (t.note || '').replace(/"/g, '""');
+
+            csv += `"${d.id}","${dt}","${cust.name}","${cust.phone}","${type}",${debit},${credit},"${note}"\n`;
+          });
+
+          csv += "\n\nCustomer Summary\nCustomer Name,Phone,Current Balance,Status\n";
+          custSnap.docs.forEach(d => {
+            const c = d.data();
+            const status = c.balance >= 0 ? "You Will Get" : "You Will Give";
+            csv += `"${c.name}","${c.phone}",${Math.abs(c.balance || 0)},"${status}"\n`;
+          });
+
+          const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = `GG_DigiBook_Ledger_${dateStr}.csv`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+
+        } else if (choice === "2") {
+          const backupData = {
+            exportDate: new Date().toISOString(),
+            user: currentUser.email,
+            totalCustomers: custSnap.docs.length,
+            totalTransactions: txSnap.docs.length,
+            customers: custSnap.docs.map(d => ({ id: d.id, ...d.data() })),
+            transactions: txSnap.docs.map(d => ({ id: d.id, ...d.data() }))
+          };
+
+          const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: "application/json" });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = `GG_DigiBook_Backup_${dateStr}.json`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        }
       } catch (err) {
         alert("Backup failed: " + err.message);
       }
@@ -639,80 +691,201 @@
     </div>
   </div>
 
-  <!-- 2. MAIN APP SCREEN -->
+  <!-- 2. MAIN APP WRAPPER -->
   <div id="app-screen" class="hidden max-w-md mx-auto bg-white min-h-screen shadow-2xl flex flex-col relative border-x border-slate-100">
-    <!-- Header -->
+    
+    <!-- Top Header -->
     <header class="bg-gradient-to-r from-emerald-800 to-emerald-700 text-white p-4 flex justify-between items-center shadow-lg sticky top-0 z-20">
       <div class="flex items-center gap-3">
         <img src="logo.png" alt="GG Logo" class="w-10 h-10 rounded-full bg-white p-0.5 object-contain shadow-md ring-2 ring-emerald-400/30">
         <div>
           <h1 class="text-sm font-extrabold tracking-tight leading-tight">GG Digi Book</h1>
-          <p id="user-name" class="text-[11px] text-emerald-200/90 font-medium truncate max-w-[140px]"></p>
+          <p id="user-name" class="text-[11px] text-emerald-200/90 font-medium truncate max-w-[170px]"></p>
         </div>
       </div>
-      <div class="flex items-center gap-2">
-        <button onclick="downloadBackup()" title="Download Full Ledger Backup" class="text-[11px] font-bold bg-emerald-700/80 hover:bg-emerald-600 active:scale-95 px-2.5 py-1.5 rounded-xl border border-emerald-500/50 shadow-sm transition flex items-center gap-1">
-          📥 Backup
+      <span class="text-[11px] font-bold bg-emerald-900/60 px-2.5 py-1 rounded-full border border-emerald-500/40 text-emerald-200">
+        Cloud Sync 🟢
+      </span>
+    </header>
+
+    <!-- TAB 1: LEDGER VIEW -->
+    <div id="view-ledger" class="flex-1 flex flex-col pb-16">
+      <!-- Net Balance & Summary Cards -->
+      <div class="p-4 bg-gradient-to-b from-emerald-50/60 to-transparent border-b border-slate-100 space-y-3">
+        <div class="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-sm flex items-center justify-between">
+          <div>
+            <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Net Balance</p>
+            <h2 id="net-balance" class="text-xl font-black text-slate-800 tracking-tight">Rs. 0</h2>
+          </div>
+          <div class="text-right">
+            <span id="customer-total-count" class="inline-block text-[11px] font-bold px-2.5 py-1 rounded-full bg-slate-100 text-slate-600">0 Customers</span>
+            <p id="net-status" class="text-[10px] font-bold text-emerald-600 mt-0.5">Settled</p>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div class="bg-white p-3.5 rounded-2xl border border-rose-100/80 shadow-sm">
+            <div class="flex items-center justify-between mb-1">
+              <span class="text-[10px] font-bold text-slate-500 uppercase">You Will Get</span>
+              <span class="w-2 h-2 rounded-full bg-rose-500"></span>
+            </div>
+            <h3 id="total-receivable" class="text-base font-black text-rose-600 tracking-tight">Rs. 0</h3>
+          </div>
+          <div class="bg-white p-3.5 rounded-2xl border border-emerald-100/80 shadow-sm">
+            <div class="flex items-center justify-between mb-1">
+              <span class="text-[10px] font-bold text-slate-500 uppercase">You Will Give</span>
+              <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+            </div>
+            <h3 id="total-payable" class="text-base font-black text-emerald-600 tracking-tight">Rs. 0</h3>
+          </div>
+        </div>
+      </div>
+
+      <!-- Search & Filters -->
+      <div class="px-4 py-3 bg-white border-b border-slate-100 space-y-2.5">
+        <div class="relative">
+          <input type="text" id="search-input" oninput="renderCustomers()" placeholder="Search customer by name or phone..." class="w-full bg-slate-50 pl-9 pr-4 py-2.5 text-xs rounded-xl border border-slate-200/80 outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition">
+          <span class="absolute left-3 top-3 text-slate-400 text-xs">🔍</span>
+        </div>
+        <div class="flex gap-2">
+          <button id="filter-all" onclick="setFilter('all')" class="px-4 py-1.5 rounded-full text-xs font-bold bg-emerald-700 text-white shadow-sm transition">All</button>
+          <button id="filter-receivable" onclick="setFilter('receivable')" class="px-4 py-1.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200 transition">You Will Get</button>
+          <button id="filter-payable" onclick="setFilter('payable')" class="px-4 py-1.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200 transition">You Will Give</button>
+        </div>
+      </div>
+
+      <!-- Customer List -->
+      <div id="customer-list" class="flex-1 overflow-y-auto divide-y divide-slate-100"></div>
+
+      <!-- Add Customer Floating Bar -->
+      <div class="p-3 bg-white/95 border-t border-slate-100 sticky bottom-14 z-10 backdrop-blur-md">
+        <button onclick="addNewCustomer()" class="w-full py-3 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white font-bold rounded-2xl shadow-lg shadow-emerald-600/20 flex items-center justify-center gap-2 transition text-sm">
+          <span class="text-lg leading-none font-black">+</span> Add New Customer
         </button>
-        <button onclick="logout()" class="text-[11px] font-bold bg-emerald-900/60 hover:bg-emerald-900 active:scale-95 px-3 py-1.5 rounded-xl border border-emerald-600/50 shadow-sm transition">
+      </div>
+    </div>
+
+    <!-- TAB 2: SETTINGS & MORE PAGE -->
+    <div id="view-settings" class="hidden flex-1 p-4 pb-20 space-y-4 overflow-y-auto bg-slate-50/60">
+      
+      <!-- Account Profile Card -->
+      <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <div class="w-12 h-12 rounded-full bg-emerald-100 text-emerald-800 flex items-center justify-center font-extrabold text-base shadow-inner">
+            👤
+          </div>
+          <div>
+            <h3 id="settings-user-name" class="font-extrabold text-slate-900 text-sm"></h3>
+            <p id="settings-user-email" class="text-xs text-slate-400 font-medium"></p>
+          </div>
+        </div>
+        <button onclick="logout()" class="text-xs font-bold text-rose-600 hover:bg-rose-50 px-3 py-1.5 rounded-xl border border-rose-200 transition active:scale-95">
           Logout
         </button>
       </div>
-    </header>
 
-    <!-- Net Balance & Summary Card -->
-    <div class="p-4 bg-gradient-to-b from-emerald-50/60 to-transparent border-b border-slate-100 space-y-3">
-      <div class="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-sm flex items-center justify-between">
+      <!-- Data Backup & Safety Section -->
+      <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3">
+        <h4 class="text-xs font-extrabold text-slate-400 uppercase tracking-wider">Data & Security</h4>
+        <div class="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-100">
+          <div>
+            <h5 class="text-xs font-bold text-slate-800">Export Ledger Backup</h5>
+            <p class="text-[11px] text-slate-400">Download Excel (.CSV) or Raw (.JSON)</p>
+          </div>
+          <button onclick="downloadBackup()" class="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-sm transition active:scale-95 flex items-center gap-1.5">
+            📥 Download
+          </button>
+        </div>
+      </div>
+
+      <!-- Contact Us & Social Media Hub -->
+      <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3.5">
+        <h4 class="text-xs font-extrabold text-slate-400 uppercase tracking-wider">Contact Us</h4>
+        
+        <!-- Direct WhatsApp Card Button -->
+        <a href="https://wa.me/923027374880?text=Hello%20GG%20Digi%20Book%20Support" target="_blank" class="w-full flex items-center justify-between p-3.5 rounded-2xl bg-emerald-500 hover:bg-emerald-600 text-white transition active:scale-[0.98] shadow-md shadow-emerald-500/20">
+          <div class="flex items-center gap-3">
+            <div class="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center text-lg">
+              💬
+            </div>
+            <div>
+              <p class="text-xs font-black tracking-wide">WhatsApp Support</p>
+              <p class="text-[11px] text-emerald-100 font-medium">0302-7374880</p>
+            </div>
+          </div>
+          <span class="text-[11px] font-black bg-white text-emerald-800 px-3 py-1.5 rounded-xl shadow-sm">
+            Chat Now →
+          </span>
+        </a>
+
+        <!-- Social Media Grid Icons (Direct Platform Redirection) -->
         <div>
-          <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Net Balance</p>
-          <h2 id="net-balance" class="text-xl font-black text-slate-800 tracking-tight">Rs. 0</h2>
+          <p class="text-[11px] font-bold text-slate-500 mb-2">Connect Across Platforms</p>
+          <div class="grid grid-cols-5 gap-2">
+            
+            <!-- YouTube -->
+            <a href="https://linktr.ee/Globalguruofficial1" target="_blank" title="YouTube" class="flex flex-col items-center justify-center p-2.5 rounded-xl bg-slate-50 border border-slate-100 hover:bg-red-50 hover:border-red-200 transition active:scale-95">
+              <span class="text-xl">🎥</span>
+              <span class="text-[9px] font-bold text-slate-600 mt-1">YouTube</span>
+            </a>
+
+            <!-- Facebook -->
+            <a href="https://linktr.ee/Globalguruofficial1" target="_blank" title="Facebook" class="flex flex-col items-center justify-center p-2.5 rounded-xl bg-slate-50 border border-slate-100 hover:bg-blue-50 hover:border-blue-200 transition active:scale-95">
+              <span class="text-xl">🌐</span>
+              <span class="text-[9px] font-bold text-slate-600 mt-1">Facebook</span>
+            </a>
+
+            <!-- Instagram -->
+            <a href="https://linktr.ee/Globalguruofficial1" target="_blank" title="Instagram" class="flex flex-col items-center justify-center p-2.5 rounded-xl bg-slate-50 border border-slate-100 hover:bg-pink-50 hover:border-pink-200 transition active:scale-95">
+              <span class="text-xl">📸</span>
+              <span class="text-[9px] font-bold text-slate-600 mt-1">Instagram</span>
+            </a>
+
+            <!-- TikTok -->
+            <a href="https://linktr.ee/Globalguruofficial1" target="_blank" title="TikTok" class="flex flex-col items-center justify-center p-2.5 rounded-xl bg-slate-50 border border-slate-100 hover:bg-slate-100 hover:border-slate-300 transition active:scale-95">
+              <span class="text-xl">🎵</span>
+              <span class="text-[9px] font-bold text-slate-600 mt-1">TikTok</span>
+            </a>
+
+            <!-- Threads -->
+            <a href="https://linktr.ee/Globalguruofficial1" target="_blank" title="Threads" class="flex flex-col items-center justify-center p-2.5 rounded-xl bg-slate-50 border border-slate-100 hover:bg-purple-50 hover:border-purple-200 transition active:scale-95">
+              <span class="text-xl">🧵</span>
+              <span class="text-[9px] font-bold text-slate-600 mt-1">Threads</span>
+            </a>
+
+          </div>
         </div>
-        <div class="text-right">
-          <span id="customer-total-count" class="inline-block text-[11px] font-bold px-2.5 py-1 rounded-full bg-slate-100 text-slate-600">0 Customers</span>
-          <p id="net-status" class="text-[10px] font-bold text-emerald-600 mt-0.5">Settled</p>
-        </div>
+
+        <!-- Official Linktree Direct Hub Button -->
+        <a href="https://linktr.ee/Globalguruofficial1" target="_blank" class="flex items-center justify-between p-3 rounded-xl bg-slate-50 hover:bg-emerald-50 border border-slate-100 transition">
+          <div class="flex items-center gap-2.5">
+            <span class="text-base">🌲</span>
+            <div>
+              <p class="text-xs font-bold text-slate-800">All Official Links (Linktree)</p>
+              <p class="text-[10px] text-slate-400">linktr.ee/Globalguruofficial1</p>
+            </div>
+          </div>
+          <span class="text-xs font-bold text-emerald-700">Open →</span>
+        </a>
+
       </div>
 
-      <div class="grid grid-cols-2 gap-3">
-        <div class="bg-white p-3.5 rounded-2xl border border-rose-100/80 shadow-sm">
-          <div class="flex items-center justify-between mb-1">
-            <span class="text-[10px] font-bold text-slate-500 uppercase">You Will Get</span>
-            <span class="w-2 h-2 rounded-full bg-rose-500"></span>
-          </div>
-          <h3 id="total-receivable" class="text-base font-black text-rose-600 tracking-tight">Rs. 0</h3>
-        </div>
-        <div class="bg-white p-3.5 rounded-2xl border border-emerald-100/80 shadow-sm">
-          <div class="flex items-center justify-between mb-1">
-            <span class="text-[10px] font-bold text-slate-500 uppercase">You Will Give</span>
-            <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
-          </div>
-          <h3 id="total-payable" class="text-base font-black text-emerald-600 tracking-tight">Rs. 0</h3>
-        </div>
+      <!-- App Version Footer -->
+      <div class="text-center py-2 text-slate-400 text-[11px] font-medium">
+        GG Digi Book • Powered by Global Guru
       </div>
     </div>
 
-    <!-- Search & Filter Controls -->
-    <div class="px-4 py-3 bg-white border-b border-slate-100 space-y-2.5">
-      <div class="relative">
-        <input type="text" id="search-input" oninput="renderCustomers()" placeholder="Search customer by name or phone..." class="w-full bg-slate-50 pl-9 pr-4 py-2.5 text-xs rounded-xl border border-slate-200/80 outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition">
-        <span class="absolute left-3 top-3 text-slate-400 text-xs">🔍</span>
-      </div>
-      <div class="flex gap-2">
-        <button id="filter-all" onclick="setFilter('all')" class="px-4 py-1.5 rounded-full text-xs font-bold bg-emerald-700 text-white shadow-sm transition">All</button>
-        <button id="filter-receivable" onclick="setFilter('receivable')" class="px-4 py-1.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200 transition">You Will Get</button>
-        <button id="filter-payable" onclick="setFilter('payable')" class="px-4 py-1.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200 transition">You Will Give</button>
-      </div>
-    </div>
-
-    <!-- Customer List -->
-    <div id="customer-list" class="flex-1 overflow-y-auto divide-y divide-slate-100"></div>
-
-    <!-- Add Customer Bottom Sticky Bar -->
-    <div class="p-4 border-t border-slate-100 sticky bottom-0 bg-white/95 backdrop-blur-md">
-      <button onclick="addNewCustomer()" class="w-full py-3.5 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white font-bold rounded-2xl shadow-lg shadow-emerald-600/20 flex items-center justify-center gap-2 transition">
-        <span class="text-xl leading-none font-black">+</span> Add New Customer
+    <!-- BOTTOM APP NAVIGATION BAR (Native Mobile Tabs) -->
+    <nav class="fixed bottom-0 max-w-md w-full bg-white border-t border-slate-200 flex z-30 shadow-lg">
+      <button id="tab-btn-ledger" onclick="switchTab('ledger')" class="flex-1 py-3 text-center text-emerald-700 font-extrabold text-xs flex flex-col items-center gap-1 border-t-2 border-emerald-600 transition">
+        <span class="text-base">📖</span> Khata
       </button>
-    </div>
+      <button id="tab-btn-settings" onclick="switchTab('settings')" class="flex-1 py-3 text-center text-slate-400 font-semibold text-xs flex flex-col items-center gap-1 border-t-2 border-transparent hover:text-slate-600 transition">
+        <span class="text-base">⚙️</span> Settings & Contact
+      </button>
+    </nav>
+
   </div>
 
   <!-- 3. CUSTOMER LEDGER MODAL -->
