@@ -23,7 +23,7 @@
       getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged 
     } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
     import { 
-      getFirestore, collection, addDoc, onSnapshot, query, where, doc, updateDoc, deleteDoc 
+      getFirestore, collection, addDoc, onSnapshot, query, where, doc, updateDoc, deleteDoc, getDocs 
     } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
     const firebaseConfig = {
@@ -49,6 +49,126 @@
     let unsubscribeTx = null;
     let attachedPhotoBase64 = "";
 
+    // Web Audio Synthesizer Engine
+    let audioCtx = null;
+    function getAudioCtx() {
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+      }
+      return audioCtx;
+    }
+
+    window.playSound = (type) => {
+      try {
+        const ctx = getAudioCtx();
+        const now = ctx.currentTime;
+
+        if (type === 'credit') {
+          // Cash Register Ding
+          const osc1 = ctx.createOscillator();
+          const osc2 = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc1.type = 'sine';
+          osc2.type = 'triangle';
+          osc1.frequency.setValueAtTime(880, now);
+          osc1.frequency.exponentialRampToValueAtTime(1760, now + 0.15);
+          osc2.frequency.setValueAtTime(1320, now);
+          gain.gain.setValueAtTime(0.2, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+          osc1.connect(gain); osc2.connect(gain); gain.connect(ctx.destination);
+          osc1.start(); osc2.start();
+          osc1.stop(now + 0.35); osc2.stop(now + 0.35);
+
+        } else if (type === 'debit') {
+          // Cash Debit Tone
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(460, now);
+          osc.frequency.exponentialRampToValueAtTime(200, now + 0.18);
+          gain.gain.setValueAtTime(0.25, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+          osc.connect(gain); gain.connect(ctx.destination);
+          osc.start(); osc.stop(now + 0.2);
+
+        } else if (type === 'tap') {
+          // UI Tap
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(600, now);
+          gain.gain.setValueAtTime(0.12, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
+          osc.connect(gain); gain.connect(ctx.destination);
+          osc.start(); osc.stop(now + 0.05);
+
+        } else if (type === 'close') {
+          // Modal Dismiss Tone
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(400, now);
+          osc.frequency.exponentialRampToValueAtTime(180, now + 0.09);
+          gain.gain.setValueAtTime(0.1, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+          osc.connect(gain); gain.connect(ctx.destination);
+          osc.start(); osc.stop(now + 0.1);
+
+        } else if (type === 'success') {
+          // Happy Double Chime
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'triangle';
+          osc.frequency.setValueAtTime(523.25, now); // C5
+          osc.frequency.setValueAtTime(659.25, now + 0.08); // E5
+          gain.gain.setValueAtTime(0.18, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+          osc.connect(gain); gain.connect(ctx.destination);
+          osc.start(); osc.stop(now + 0.25);
+
+        } else if (type === 'delete') {
+          // Warning Delete Blip
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'sawtooth';
+          osc.frequency.setValueAtTime(300, now);
+          osc.frequency.linearRampToValueAtTime(100, now + 0.15);
+          gain.gain.setValueAtTime(0.15, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+          osc.connect(gain); gain.connect(ctx.destination);
+          osc.start(); osc.stop(now + 0.18);
+
+        } else if (type === 'download') {
+          // PDF / Backup Complete Ping
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(784, now); // G5
+          osc.frequency.exponentialRampToValueAtTime(1046.5, now + 0.12); // C6
+          gain.gain.setValueAtTime(0.2, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+          osc.connect(gain); gain.connect(ctx.destination);
+          osc.start(); osc.stop(now + 0.3);
+
+        } else if (type === 'mic') {
+          // Voice Mic Beep
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(950, now);
+          gain.gain.setValueAtTime(0.15, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
+          osc.connect(gain); gain.connect(ctx.destination);
+          osc.start(); osc.stop(now + 0.08);
+        }
+      } catch (err) {
+        console.warn("Audio Context inactive", err);
+      }
+    };
+
     onAuthStateChanged(auth, (user) => {
       currentUser = user;
       if (user) {
@@ -63,9 +183,14 @@
     });
 
     window.loginGoogle = () => {
+      playSound('tap');
       signInWithPopup(auth, provider).catch(err => alert("Login Error: " + err.message));
     };
-    window.logout = () => signOut(auth);
+
+    window.logout = () => {
+      playSound('tap');
+      signOut(auth);
+    };
 
     function loadCustomers() {
       const q = query(collection(db, "customers"), where("userId", "==", currentUser.uid));
@@ -81,11 +206,9 @@
           if (data.balance < 0) totalPayable += Math.abs(data.balance);
         });
 
-        // Update Totals
         document.getElementById('total-receivable').innerText = `Rs. ${totalReceivable.toLocaleString()}`;
         document.getElementById('total-payable').innerText = `Rs. ${totalPayable.toLocaleString()}`;
 
-        // Net Balance Calculations
         const net = totalReceivable - totalPayable;
         const netEl = document.getElementById('net-balance');
         const netStatusEl = document.getElementById('net-status');
@@ -130,7 +253,7 @@
           <div class="py-16 text-center text-gray-400">
             <div class="w-14 h-14 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-3 text-2xl">📖</div>
             <p class="text-sm font-semibold text-gray-600">No Customers Found</p>
-            <p class="text-xs text-gray-400 mt-1">Add a new customer to start your digital ledger</p>
+            <p class="text-xs text-gray-400 mt-1">Add a customer to start your digital ledger</p>
           </div>`;
         return;
       }
@@ -168,6 +291,7 @@
     };
 
     window.setFilter = (type) => {
+      playSound('tap');
       currentFilter = type;
       ['all', 'receivable', 'payable'].forEach(f => {
         const btn = document.getElementById(`filter-${f}`);
@@ -181,6 +305,7 @@
     };
 
     window.addNewCustomer = async () => {
+      playSound('tap');
       const name = prompt("Enter customer name:");
       if (!name || !name.trim()) return;
       const phone = prompt("Enter customer phone/WhatsApp number:") || "";
@@ -193,12 +318,14 @@
           balance: 0,
           createdAt: new Date().toISOString()
         });
+        playSound('success');
       } catch (err) {
         alert("Failed to create customer: " + err.message);
       }
     };
 
     window.openCustomerDetail = (cust) => {
+      playSound('tap');
       selectedCustomer = cust;
       document.getElementById('modal-cust-name').innerText = cust.name;
       document.getElementById('modal-cust-phone').innerText = cust.phone || 'No phone available';
@@ -267,6 +394,7 @@
     }
 
     window.closeModal = () => {
+      playSound('close');
       document.getElementById('tx-modal').classList.add('hidden');
       if (unsubscribeTx) unsubscribeTx();
     };
@@ -280,6 +408,9 @@
         alert("Please enter a valid amount");
         return;
       }
+
+      // Audio Trigger
+      playSound(type === 'diye' ? 'debit' : 'credit');
 
       const balanceDiff = (type === 'diye') ? amount : -amount;
       const newBal = (selectedCustomer.balance || 0) + balanceDiff;
@@ -301,6 +432,9 @@
         amountInput.value = '';
         noteInput.value = '';
         clearPhotoAttachment();
+
+        // Auto close after entry
+        closeModal();
       } catch (err) {
         alert("Error saving transaction: " + err.message);
       }
@@ -331,6 +465,7 @@
           attachedPhotoBase64 = canvas.toDataURL('image/jpeg', 0.65);
           document.getElementById('photo-preview-container').classList.remove('hidden');
           document.getElementById('photo-preview-thumb').src = attachedPhotoBase64;
+          playSound('success');
         };
         img.src = e.target.result;
       };
@@ -345,11 +480,13 @@
     };
 
     window.viewImage = (base64) => {
+      playSound('tap');
       const w = window.open("");
       w.document.write(`<img src="${base64}" style="max-width:92%; margin:30px auto; display:block; border-radius:16px; box-shadow:0 12px 30px rgba(0,0,0,0.15);">`);
     };
 
     window.startSpeechRecognition = () => {
+      playSound('mic');
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (!SpeechRecognition) {
         alert("Your browser does not support voice recognition. Please use Google Chrome or Safari.");
@@ -369,6 +506,7 @@
     };
 
     window.deleteCustomer = async () => {
+      playSound('delete');
       if (!confirm(`Are you sure you want to delete ${selectedCustomer.name}'s account? All records will be removed.`)) return;
       try {
         await deleteDoc(doc(db, "customers", selectedCustomer.id));
@@ -379,6 +517,7 @@
     };
 
     window.sendWhatsApp = () => {
+      playSound('tap');
       if (!selectedCustomer || !selectedCustomer.phone) {
         alert("Customer phone number is not available.");
         return;
@@ -392,6 +531,7 @@
     };
 
     window.downloadPDF = () => {
+      playSound('download');
       const { jsPDF } = window.jspdf;
       const pdf = new jsPDF();
 
@@ -440,6 +580,40 @@
 
       pdf.save(`${selectedCustomer.name}_Ledger.pdf`);
     };
+
+    window.downloadBackup = async () => {
+      playSound('download');
+      try {
+        const qCust = query(collection(db, "customers"), where("userId", "==", currentUser.uid));
+        const qTx = query(collection(db, "transactions"), where("userId", "==", currentUser.uid));
+
+        const [custSnap, txSnap] = await Promise.all([
+          getDocs(qCust),
+          getDocs(qTx)
+        ]);
+
+        const backupData = {
+          exportDate: new Date().toISOString(),
+          user: currentUser.email,
+          totalCustomers: custSnap.docs.length,
+          totalTransactions: txSnap.docs.length,
+          customers: custSnap.docs.map(d => ({ id: d.id, ...d.data() })),
+          transactions: txSnap.docs.map(d => ({ id: d.id, ...d.data() }))
+        };
+
+        const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `GG_DigiBook_Backup_${new Date().toISOString().slice(0, 10)}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        alert("Backup failed: " + err.message);
+      }
+    };
   </script>
 </head>
 <body class="bg-slate-50 min-h-screen text-slate-800 antialiased selection:bg-emerald-500 selection:text-white">
@@ -473,17 +647,21 @@
         <img src="logo.png" alt="GG Logo" class="w-10 h-10 rounded-full bg-white p-0.5 object-contain shadow-md ring-2 ring-emerald-400/30">
         <div>
           <h1 class="text-sm font-extrabold tracking-tight leading-tight">GG Digi Book</h1>
-          <p id="user-name" class="text-[11px] text-emerald-200/90 font-medium truncate max-w-[160px]"></p>
+          <p id="user-name" class="text-[11px] text-emerald-200/90 font-medium truncate max-w-[140px]"></p>
         </div>
       </div>
-      <button onclick="logout()" class="text-[11px] font-bold bg-emerald-900/60 hover:bg-emerald-900 active:scale-95 px-3 py-1.5 rounded-xl border border-emerald-600/50 shadow-sm transition">
-        Logout
-      </button>
+      <div class="flex items-center gap-2">
+        <button onclick="downloadBackup()" title="Download Full Ledger Backup" class="text-[11px] font-bold bg-emerald-700/80 hover:bg-emerald-600 active:scale-95 px-2.5 py-1.5 rounded-xl border border-emerald-500/50 shadow-sm transition flex items-center gap-1">
+          📥 Backup
+        </button>
+        <button onclick="logout()" class="text-[11px] font-bold bg-emerald-900/60 hover:bg-emerald-900 active:scale-95 px-3 py-1.5 rounded-xl border border-emerald-600/50 shadow-sm transition">
+          Logout
+        </button>
+      </div>
     </header>
 
     <!-- Net Balance & Summary Card -->
     <div class="p-4 bg-gradient-to-b from-emerald-50/60 to-transparent border-b border-slate-100 space-y-3">
-      <!-- Net Balance Highlight -->
       <div class="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-sm flex items-center justify-between">
         <div>
           <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Net Balance</p>
@@ -495,7 +673,6 @@
         </div>
       </div>
 
-      <!-- Debit & Credit Grid -->
       <div class="grid grid-cols-2 gap-3">
         <div class="bg-white p-3.5 rounded-2xl border border-rose-100/80 shadow-sm">
           <div class="flex items-center justify-between mb-1">
@@ -539,8 +716,8 @@
   </div>
 
   <!-- 3. CUSTOMER LEDGER MODAL -->
-  <div id="tx-modal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-    <div class="bg-white w-full max-w-md max-h-[92vh] rounded-t-3xl sm:rounded-3xl p-5 shadow-2xl flex flex-col overflow-hidden animate-in">
+  <div id="tx-modal" onclick="closeModal()" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+    <div onclick="event.stopPropagation()" class="bg-white w-full max-w-md max-h-[92vh] rounded-t-3xl sm:rounded-3xl p-5 shadow-2xl flex flex-col overflow-hidden animate-in">
       
       <!-- Modal Header -->
       <div class="flex justify-between items-start pb-3 border-b border-slate-100">
