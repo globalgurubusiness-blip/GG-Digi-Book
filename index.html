@@ -52,6 +52,22 @@
     let gallaTotalOut = 0;
     let gallaClosingCash = 0;
 
+    let cachedLogoBase64 = null;
+    function loadLogoImage() {
+      const img = new Image();
+      img.crossOrigin = "Anonymous";
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0);
+        cachedLogoBase64 = canvas.toDataURL("image/png");
+      };
+      img.src = "logo.png";
+    }
+    loadLogoImage();
+
     let audioCtx = null;
     function getAudioCtx() {
       if (!audioCtx) {
@@ -205,12 +221,10 @@
       const accountsView = document.getElementById('view-accounts');
       const settingsView = document.getElementById('view-settings');
 
-      // Mobile buttons
       const tabLedgerBtn = document.getElementById('tab-btn-ledger');
       const tabAccountsBtn = document.getElementById('tab-btn-accounts');
       const tabSettingsBtn = document.getElementById('tab-btn-settings');
 
-      // Desktop buttons
       const dTabLedgerBtn = document.getElementById('d-tab-btn-ledger');
       const dTabAccountsBtn = document.getElementById('d-tab-btn-accounts');
       const dTabSettingsBtn = document.getElementById('d-tab-btn-settings');
@@ -354,6 +368,14 @@
       if (inEl) inEl.innerText = `Rs. ${gallaTotalIn.toLocaleString()}`;
       if (outEl) outEl.innerText = `Rs. ${gallaTotalOut.toLocaleString()}`;
       if (closeEl) closeEl.innerText = `Rs. ${gallaClosingCash.toLocaleString()}`;
+
+      // Update Screen Table Footer (Grand Total / Meezan)
+      const fIn = document.getElementById('footer-total-in');
+      const fOut = document.getElementById('footer-total-out');
+      const fNet = document.getElementById('footer-grand-closing');
+      if (fIn) fIn.innerText = `+ Rs. ${gallaTotalIn.toLocaleString()}`;
+      if (fOut) fOut.innerText = `- Rs. ${gallaTotalOut.toLocaleString()}`;
+      if (fNet) fNet.innerText = `Rs. ${gallaClosingCash.toLocaleString()}`;
     }
 
     window.editOpeningBalance = async () => {
@@ -466,7 +488,7 @@
       const phone = prompt("Enter phone number (optional):") || "";
 
       try {
-        const docRef = await addDoc(collection(db, "customers"), {
+        await addDoc(collection(db, "customers"), {
           userId: currentUser.uid,
           name: name.trim(),
           phone: phone.trim(),
@@ -479,7 +501,6 @@
       }
     };
 
-    // Unified customer selector for both Mobile Modal and Desktop Side-by-Side Panel
     window.selectAndOpenCustomer = (cust) => {
       playSound('tap');
       selectedCustomer = cust;
@@ -487,7 +508,6 @@
       updateCustomerDetailUI();
       clearPhotoAttachment();
       
-      // On mobile screen show modal, on PC show desktop right pane
       if (window.innerWidth < 768) {
         document.getElementById('tx-modal').classList.remove('hidden');
       }
@@ -500,14 +520,12 @@
       const statusText = bal > 0 ? 'You Will Get' : bal < 0 ? 'You Will Give' : 'Settled';
       const balClass = `text-xs font-bold px-2.5 py-1 rounded-md inline-block ${bal > 0 ? 'bg-rose-50 text-rose-600' : bal < 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-gray-100 text-gray-600'}`;
 
-      // Mobile Modal
       document.getElementById('modal-cust-name').innerText = selectedCustomer.name;
       document.getElementById('modal-cust-phone').innerText = selectedCustomer.phone || 'No phone available';
       const mBalEl = document.getElementById('modal-cust-balance');
       mBalEl.innerText = `Rs. ${Math.abs(bal).toLocaleString()} (${statusText})`;
       mBalEl.className = balClass;
 
-      // Desktop Split Pane
       const dPlaceholder = document.getElementById('desktop-no-customer-pane');
       const dDetailPane = document.getElementById('desktop-customer-detail-pane');
       if (dPlaceholder && dDetailPane) {
@@ -734,46 +752,161 @@
       });
     }
 
+    // Galla Cash Book Statement PDF (With Logo Image & Grand Total Meezan Footer)
     window.downloadGallaPDF = () => {
       playSound('download');
       const { jsPDF } = window.jspdf;
       const pdf = new jsPDF();
 
-      pdf.setFontSize(18);
+      if (cachedLogoBase64) {
+        pdf.addImage(cachedLogoBase64, 'PNG', 14, 12, 14, 14);
+      }
+      
+      pdf.setFontSize(16);
       pdf.setTextColor(5, 150, 105);
-      pdf.text("GG Digi Book - Galla Cash Book Statement", 14, 20);
+      pdf.text("GG Digi Book - Galla Cash Book Statement", 32, 20);
 
-      pdf.setFontSize(10);
-      pdf.setTextColor(80, 80, 80);
-      pdf.text(`User Account: ${currentUser.email || 'Admin'}`, 14, 28);
-      pdf.text(`Statement Date: ${new Date().toLocaleDateString('en-GB')}`, 14, 34);
+      pdf.setFontSize(9);
+      pdf.setTextColor(100, 116, 139);
+      pdf.text(`User Account: ${currentUser.email || 'Admin'}`, 32, 26);
+      pdf.text(`Generated On: ${new Date().toLocaleString('en-GB')}`, 32, 31);
 
-      pdf.setFontSize(11);
+      pdf.setFillColor(248, 250, 252);
+      pdf.roundedRect(14, 36, 182, 15, 2, 2, 'F');
+      pdf.setFontSize(8.5);
       pdf.setTextColor(30, 41, 59);
-      pdf.text(`Opening Balance: Rs. ${gallaOpeningBalance.toLocaleString()}  |  Closing Cash: Rs. ${gallaClosingCash.toLocaleString()}`, 14, 42);
+      pdf.setFont(undefined, 'bold');
+      pdf.text(`Opening: Rs. ${gallaOpeningBalance.toLocaleString()}`, 18, 46);
+      pdf.setTextColor(5, 150, 105);
+      pdf.text(`Total In: +Rs. ${gallaTotalIn.toLocaleString()}`, 65, 46);
+      pdf.setTextColor(225, 29, 72);
+      pdf.text(`Total Out: -Rs. ${gallaTotalOut.toLocaleString()}`, 115, 46);
+      pdf.setTextColor(15, 23, 42);
+      pdf.text(`Closing: Rs. ${gallaClosingCash.toLocaleString()}`, 155, 46);
 
-      const tableData = gallaTxHistory.map(t => {
+      const sortedHistory = [...gallaTxHistory].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+      let currentRunning = gallaOpeningBalance;
+
+      const tableData = sortedHistory.map(t => {
         const isCashIn = (t.gallaAction === 'in') || (t.type === 'liye');
-        const dateStr = new Date(t.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+        const amt = Number(t.amount || 0);
+        currentRunning += isCashIn ? amt : -amt;
+
+        const dateStr = new Date(t.createdAt).toLocaleDateString('en-GB', { 
+          day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' 
+        });
+
         return [
           dateStr,
-          t.customerName || 'Account',
+          t.customerName || 'Cash Account',
           isCashIn ? 'CASH IN (+)' : 'CASH OUT (-)',
           t.note || '-',
-          `Rs. ${Number(t.amount || 0).toLocaleString()}`
+          `${isCashIn ? '+' : '-'} Rs. ${amt.toLocaleString()}`,
+          `Rs. ${currentRunning.toLocaleString()}`
         ];
       });
 
+      // Bottom Grand Total / Meezan Row
+      const footRow = [
+        [
+          'GRAND TOTAL (MEEZAN)',
+          `Total Entries: ${sortedHistory.length}`,
+          'IN vs OUT',
+          `In: Rs. ${gallaTotalIn.toLocaleString()} | Out: Rs. ${gallaTotalOut.toLocaleString()}`,
+          `Net: Rs. ${(gallaTotalIn - gallaTotalOut).toLocaleString()}`,
+          `Closing: Rs. ${gallaClosingCash.toLocaleString()}`
+        ]
+      ];
+
+      pdf.autoTable({
+        startY: 55,
+        head: [['Date & Time', 'Account / Party', 'Type', 'Description / Note', 'Amount', 'Balance']],
+        body: tableData,
+        foot: footRow,
+        theme: 'striped',
+        headStyles: { fillColor: [5, 150, 105], fontSize: 8.5 },
+        footStyles: { fillColor: [15, 23, 42], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8.5 },
+        styles: { fontSize: 8, cellPadding: 2.5 },
+        columnStyles: {
+          4: { fontStyle: 'bold', halign: 'right' },
+          5: { fontStyle: 'bold', halign: 'right' }
+        }
+      });
+
+      pdf.save(`GG_Galla_Statement_${new Date().toISOString().slice(0, 10)}.pdf`);
+    };
+
+    // Customer Ledger Statement PDF (With Logo Image & Meezan Foot)
+    window.downloadPDF = () => {
+      playSound('download');
+      const { jsPDF } = window.jspdf;
+      const pdf = new jsPDF();
+
+      if (cachedLogoBase64) {
+        pdf.addImage(cachedLogoBase64, 'PNG', 14, 12, 14, 14);
+      }
+
+      pdf.setFontSize(16);
+      pdf.setTextColor(5, 150, 105);
+      pdf.text("GG Digi Book - Ledger Statement", 32, 20);
+
+      pdf.setFontSize(9);
+      pdf.setTextColor(100, 116, 139);
+      pdf.text(`Customer Name: ${selectedCustomer.name}`, 32, 26);
+      pdf.text(`Phone: ${selectedCustomer.phone || 'N/A'}  |  Date: ${new Date().toLocaleDateString('en-GB')}`, 32, 31);
+
+      const balStatus = selectedCustomer.balance >= 0 ? 'Receivable' : 'Payable';
+      const balText = `Current Balance: Rs. ${Math.abs(selectedCustomer.balance || 0).toLocaleString()} (${balStatus})`;
+      pdf.setFontSize(10);
+      pdf.setTextColor(selectedCustomer.balance >= 0 ? 225 : 5, selectedCustomer.balance >= 0 ? 29 : 150, selectedCustomer.balance >= 0 ? 72 : 105);
+      pdf.text(balText, 14, 42);
+
+      const sortedTx = [...currentTransactions].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+      let runningBal = 0;
+      let totalGiven = 0;
+      let totalGot = 0;
+
+      const tableData = sortedTx.map(t => {
+        const isGiven = t.type === 'diye';
+        const amt = Number(t.amount || 0);
+        if (isGiven) totalGiven += amt; else totalGot += amt;
+        runningBal += isGiven ? amt : -amt;
+
+        let noteText = t.note || (isGiven ? 'Given (Debit)' : 'Received (Credit)');
+        if (!/^[\x00-\x7F]*$/.test(noteText)) {
+          noteText = isGiven ? 'Given (Debit)' : 'Received (Credit)';
+        }
+        return [
+          new Date(t.createdAt).toLocaleDateString('en-GB'),
+          noteText,
+          isGiven ? `Rs. ${amt.toLocaleString()}` : '-',
+          !isGiven ? `Rs. ${amt.toLocaleString()}` : '-',
+          `Rs. ${Math.abs(runningBal).toLocaleString()} ${runningBal >= 0 ? '(Rec)' : '(Pay)'}`
+        ];
+      });
+
+      const custFootRow = [
+        [
+          'TOTAL (MEEZAN)',
+          `Total Entries: ${sortedTx.length}`,
+          `Rs. ${totalGiven.toLocaleString()}`,
+          `Rs. ${totalGot.toLocaleString()}`,
+          `Rs. ${Math.abs(runningBal).toLocaleString()} ${runningBal >= 0 ? '(Rec)' : '(Pay)'}`
+        ]
+      ];
+
       pdf.autoTable({
         startY: 48,
-        head: [['Date', 'Account / Party', 'Type', 'Description / Note', 'Amount']],
+        head: [['Date', 'Description', 'Given (Debit)', 'Received (Credit)', 'Balance']],
         body: tableData,
+        foot: custFootRow,
         theme: 'striped',
         headStyles: { fillColor: [5, 150, 105] },
+        footStyles: { fillColor: [15, 23, 42], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8.5 },
         styles: { fontSize: 8.5 }
       });
 
-      pdf.save(`GG_Galla_CashBook_${new Date().toISOString().slice(0, 10)}.pdf`);
+      pdf.save(`${selectedCustomer.name}_Ledger.pdf`);
     };
 
     window.downloadBackup = async () => {
@@ -1039,57 +1172,6 @@
       const msg = `Dear ${selectedCustomer.name},\nAccording to GG Digi Book records, your current ledger balance is Rs. ${Math.abs(bal).toLocaleString()} (${statusText}).\nPlease review and confirm. Thank you!`;
       window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
     };
-
-    window.downloadPDF = () => {
-      playSound('download');
-      const { jsPDF } = window.jspdf;
-      const pdf = new jsPDF();
-
-      pdf.setFontSize(18);
-      pdf.setTextColor(5, 150, 105);
-      pdf.text("GG Digi Book - Ledger Statement", 14, 20);
-
-      pdf.setFontSize(10);
-      pdf.setTextColor(80, 80, 80);
-      pdf.text(`Customer Name: ${selectedCustomer.name}`, 14, 29);
-      pdf.text(`Phone: ${selectedCustomer.phone || 'N/A'}`, 14, 35);
-      pdf.text(`Date: ${new Date().toLocaleDateString('en-GB')}`, 14, 41);
-
-      const balStatus = selectedCustomer.balance >= 0 ? 'Receivable' : 'Payable';
-      const balText = `Current Balance: Rs. ${Math.abs(selectedCustomer.balance || 0).toLocaleString()} (${balStatus})`;
-      pdf.setFontSize(11);
-      pdf.setTextColor(selectedCustomer.balance >= 0 ? 225 : 5, selectedCustomer.balance >= 0 ? 29 : 150, selectedCustomer.balance >= 0 ? 72 : 105);
-      pdf.text(balText, 14, 48);
-
-      const sortedTx = [...currentTransactions].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-      let runningBal = 0;
-      const tableData = sortedTx.map(t => {
-        const isGiven = t.type === 'diye';
-        runningBal += isGiven ? Number(t.amount) : -Number(t.amount);
-        let noteText = t.note || (isGiven ? 'Given (Debit)' : 'Received (Credit)');
-        if (!/^[\x00-\x7F]*$/.test(noteText)) {
-          noteText = isGiven ? 'Given (Debit)' : 'Received (Credit)';
-        }
-        return [
-          new Date(t.createdAt).toLocaleDateString('en-GB'),
-          noteText,
-          isGiven ? `Rs. ${Number(t.amount).toLocaleString()}` : '-',
-          !isGiven ? `Rs. ${Number(t.amount).toLocaleString()}` : '-',
-          `Rs. ${Math.abs(runningBal).toLocaleString()} ${runningBal >= 0 ? '(Rec)' : '(Pay)'}`
-        ];
-      });
-
-      pdf.autoTable({
-        startY: 53,
-        head: [['Date', 'Description', 'Given (Debit)', 'Received (Credit)', 'Balance']],
-        body: tableData,
-        theme: 'striped',
-        headStyles: { fillColor: [5, 150, 105] },
-        styles: { fontSize: 8.5 }
-      });
-
-      pdf.save(`${selectedCustomer.name}_Ledger.pdf`);
-    };
   </script>
 </head>
 <body class="bg-slate-100 min-h-screen text-slate-800 antialiased selection:bg-emerald-500 selection:text-white">
@@ -1115,13 +1197,12 @@
     </div>
   </div>
 
-  <!-- 2. MAIN APP RESPONSIVE WRAPPER (Mobile Frame + PC Dashboard) -->
+  <!-- 2. MAIN APP RESPONSIVE WRAPPER -->
   <div id="app-screen" class="hidden min-h-screen flex flex-col md:flex-row bg-slate-100">
     
-    <!-- DESKTOP LEFT SIDEBAR (>= 768px screens) -->
+    <!-- DESKTOP LEFT SIDEBAR -->
     <aside class="hidden md:flex flex-col w-64 lg:w-72 bg-white border-r border-slate-200 h-screen sticky top-0 z-30 p-5 justify-between shadow-sm">
       <div class="space-y-6">
-        <!-- Logo Brand -->
         <div class="flex items-center gap-3">
           <img src="logo.png" alt="GG Logo" class="w-11 h-11 rounded-full bg-white p-0.5 object-contain shadow-md ring-2 ring-emerald-500/20">
           <div>
@@ -1130,7 +1211,6 @@
           </div>
         </div>
 
-        <!-- User Profile Card -->
         <div class="p-3 bg-slate-50 rounded-2xl border border-slate-100 flex items-center gap-3">
           <div class="w-9 h-9 rounded-full bg-emerald-600 text-white flex items-center justify-center font-black text-xs shadow-inner">
             👤
@@ -1141,7 +1221,6 @@
           </div>
         </div>
 
-        <!-- Navigation Menu -->
         <nav class="space-y-1.5">
           <button id="d-tab-btn-ledger" onclick="switchTab('ledger')" class="w-full flex items-center gap-3 px-4 py-3 rounded-2xl bg-emerald-50 text-emerald-800 font-extrabold text-sm shadow-sm transition">
             <span class="text-lg">📖</span> Khata / Customers
@@ -1155,7 +1234,6 @@
         </nav>
       </div>
 
-      <!-- Sidebar Bottom Logout -->
       <div>
         <button onclick="logout()" class="w-full py-2.5 px-4 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold rounded-2xl text-xs transition flex items-center justify-center gap-2">
           <span>🚪</span> Sign Out
@@ -1164,10 +1242,10 @@
       </div>
     </aside>
 
-    <!-- MAIN CONTENT AREA (Mobile Central Frame + PC Stretched Content) -->
+    <!-- MAIN CONTENT AREA -->
     <div class="flex-1 flex flex-col min-h-screen max-w-md md:max-w-none mx-auto md:mx-0 w-full bg-white md:bg-slate-50 border-x md:border-x-0 border-slate-200">
       
-      <!-- Mobile Top Header (Hidden on PC) -->
+      <!-- Mobile Top Header -->
       <header class="md:hidden bg-gradient-to-r from-emerald-800 to-emerald-700 text-white p-4 flex justify-between items-center shadow-lg sticky top-0 z-20">
         <div class="flex items-center gap-3">
           <img src="logo.png" alt="GG Logo" class="w-10 h-10 rounded-full bg-white p-0.5 object-contain shadow-md ring-2 ring-emerald-400/30">
@@ -1181,13 +1259,9 @@
         </span>
       </header>
 
-      <!-- PAGE 1: LEDGER VIEW (Mobile Single Column / PC 2-Column Split Screen) -->
+      <!-- PAGE 1: LEDGER VIEW -->
       <div id="view-ledger" class="flex-1 flex flex-col md:flex-row pb-16 md:pb-0 h-full">
-        
-        <!-- Left Customer List Column (Full width on Mobile / 400px on Desktop) -->
         <div class="w-full md:w-[380px] lg:w-[420px] md:border-r border-slate-200 flex flex-col bg-white">
-          
-          <!-- Net Balance & Summary Cards -->
           <div class="p-4 bg-gradient-to-b from-emerald-50/60 to-transparent border-b border-slate-100 space-y-3">
             <div class="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-sm flex items-center justify-between">
               <div>
@@ -1218,7 +1292,6 @@
             </div>
           </div>
 
-          <!-- Search & Filters -->
           <div class="px-4 py-3 bg-white border-b border-slate-100 space-y-2.5">
             <div class="relative">
               <input type="text" id="search-input" oninput="renderCustomers()" placeholder="Search customer by name or phone..." class="w-full bg-slate-50 pl-9 pr-4 py-2.5 text-xs rounded-xl border border-slate-200/80 outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition">
@@ -1231,10 +1304,8 @@
             </div>
           </div>
 
-          <!-- Customer List Scrollable -->
           <div id="customer-list" class="flex-1 overflow-y-auto divide-y divide-slate-100 max-h-[calc(100vh-360px)] md:max-h-none"></div>
 
-          <!-- Add Customer Bar -->
           <div class="p-3 bg-white/95 border-t border-slate-100 sticky bottom-14 md:bottom-0 z-10 backdrop-blur-md">
             <button onclick="addNewCustomer()" class="w-full py-3 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white font-bold rounded-2xl shadow-lg shadow-emerald-600/20 flex items-center justify-center gap-2 transition text-sm">
               <span class="text-lg leading-none font-black">+</span> Add New Customer
@@ -1242,22 +1313,17 @@
           </div>
         </div>
 
-        <!-- Right Side Desktop Pane (Hidden on Mobile, Visible on PC) -->
+        <!-- Desktop Split Pane -->
         <div class="hidden md:flex flex-1 flex-col bg-slate-50 h-screen overflow-y-auto p-6">
-          
-          <!-- State 1: When No Customer Selected -->
           <div id="desktop-no-customer-pane" class="flex-1 flex flex-col items-center justify-center text-center p-8 text-slate-400">
             <div class="w-20 h-20 bg-white rounded-3xl shadow-sm border border-slate-200/80 flex items-center justify-center text-3xl mb-4">
               📖
             </div>
             <h3 class="text-base font-extrabold text-slate-700">No Customer Selected</h3>
-            <p class="text-xs text-slate-400 mt-1 max-w-xs">Left side list se kisi bhi customer ya account par click karein taake detailed ledger aur entry panel open ho sake.</p>
+            <p class="text-xs text-slate-400 mt-1 max-w-xs">Left side list se kisi bhi customer ya account par click karein taake ledger open ho sake.</p>
           </div>
 
-          <!-- State 2: Customer Detail & Transactions Ledger (Desktop) -->
           <div id="desktop-customer-detail-pane" class="hidden flex-1 flex flex-col space-y-4">
-            
-            <!-- Top Customer Header Card -->
             <div class="bg-white p-5 rounded-3xl border border-slate-200/80 shadow-sm flex items-center justify-between">
               <div>
                 <h3 id="d-cust-name" class="text-xl font-black text-slate-900 leading-tight"></h3>
@@ -1277,11 +1343,9 @@
               </div>
             </div>
 
-            <!-- In-Page Transaction Entry Panel (No Popups on Desktop) -->
             <div class="bg-white p-5 rounded-3xl border border-slate-200/80 shadow-sm space-y-3">
               <h4 class="text-xs font-extrabold text-slate-400 uppercase tracking-wider">Quick Transaction Entry</h4>
               
-              <!-- Photo Preview (Desktop) -->
               <div id="d-photo-preview-container" class="hidden flex items-center justify-between bg-slate-50 border border-emerald-200 p-2.5 rounded-xl">
                 <div class="flex items-center gap-2">
                   <img id="d-photo-preview-thumb" class="w-8 h-8 rounded-lg object-cover border border-emerald-300" src="">
@@ -1316,26 +1380,21 @@
               </div>
             </div>
 
-            <!-- Scrollable Customer Ledger History -->
             <div class="bg-white p-5 rounded-3xl border border-slate-200/80 shadow-sm flex-1 flex flex-col space-y-3">
               <h4 class="text-xs font-extrabold text-slate-400 uppercase tracking-wider">Transaction History</h4>
               <div id="d-tx-history-list" class="space-y-2 flex-1 overflow-y-auto max-h-[350px]"></div>
             </div>
-
           </div>
-
         </div>
 
       </div>
 
-      <!-- PAGE 2: ACCOUNTS / GALLA VIEW (Wide PC Layout) -->
+      <!-- PAGE 2: ACCOUNTS / GALLA VIEW -->
       <div id="view-accounts" class="hidden flex-1 p-4 md:p-6 pb-20 md:pb-6 space-y-4 overflow-y-auto bg-slate-50">
-        
-        <!-- TOP STRIP: OPENING, CASH IN, CASH OUT, CLOSING CASH -->
         <div class="bg-white p-4 md:p-5 rounded-3xl border border-slate-200/90 shadow-sm space-y-3 max-w-5xl mx-auto">
           <div class="flex items-center justify-between">
             <span class="text-xs font-black text-slate-400 uppercase tracking-wider">Live Galla Cash Flow</span>
-            <span class="text-[10px] font-bold bg-slate-100 text-slate-500 px-2.5 py-0.5 rounded-full">Continuous Rolling (No Reset)</span>
+            <span class="text-[10px] font-bold bg-slate-100 text-slate-500 px-2.5 py-0.5 rounded-full">Continuous Rolling</span>
           </div>
 
           <div class="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-3 text-center">
@@ -1364,16 +1423,13 @@
           </div>
         </div>
 
-        <!-- 2-COLUMN GALLA ENTRY & HISTORY ON PC -->
         <div class="grid grid-cols-1 md:grid-cols-12 gap-4 max-w-5xl mx-auto">
-          
-          <!-- Galla Entry Box -->
           <div class="md:col-span-5 bg-white p-5 rounded-3xl border border-slate-200/80 shadow-sm space-y-3.5">
             <div class="flex items-center justify-between">
               <h4 class="text-xs font-extrabold text-slate-800 uppercase tracking-wider">Galla Entry (Account Link)</h4>
               <span class="text-[10px] font-bold bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-md">Live Sync</span>
             </div>
-            <p class="text-[11px] text-slate-400">Account select karein aur amount box mein formula daal kar Enter karein:</p>
+            <p class="text-[11px] text-slate-400">Account select karein aur formula likh kar Enter karein:</p>
 
             <div>
               <label class="text-[10px] font-bold text-slate-500 block mb-1">Select Account / Party:</label>
@@ -1400,7 +1456,7 @@
             </div>
           </div>
 
-          <!-- History Table on Right Side -->
+          <!-- History Table on Right Side with Grand Total (Meezan) Footer -->
           <div class="md:col-span-7 bg-white p-5 rounded-3xl border border-slate-200/80 shadow-sm space-y-3">
             <div class="flex items-center justify-between">
               <h4 class="text-xs font-extrabold text-slate-800 uppercase tracking-wider">Cash Book Activity (History)</h4>
@@ -1419,19 +1475,23 @@
                   </tr>
                 </thead>
                 <tbody id="galla-history-tbody"></tbody>
+                <!-- SCREEN GRAND TOTAL / MEEZAN FOOTER -->
+                <tfoot class="border-t-2 border-slate-300 bg-slate-900 text-white text-xs font-bold">
+                  <tr>
+                    <td class="p-2.5" colspan="2">GRAND TOTAL (MEEZAN)</td>
+                    <td class="p-2.5 text-emerald-400 font-extrabold text-[11px]" id="footer-total-in">+ Rs. 0</td>
+                    <td class="p-2.5 text-right text-emerald-300 font-black" id="footer-grand-closing">Rs. 0</td>
+                  </tr>
+                </tfoot>
               </table>
             </div>
           </div>
-
         </div>
-
       </div>
 
-      <!-- PAGE 3: SETTINGS & MORE VIEW -->
+      <!-- PAGE 3: SETTINGS VIEW -->
       <div id="view-settings" class="hidden flex-1 p-4 md:p-6 pb-20 md:pb-6 space-y-4 overflow-y-auto bg-slate-50">
-        
         <div class="max-w-2xl mx-auto space-y-4">
-          <!-- Profile Card -->
           <div class="bg-white p-4 md:p-5 rounded-3xl border border-slate-200 shadow-sm flex items-center justify-between">
             <div class="flex items-center gap-3">
               <div class="w-12 h-12 rounded-full bg-emerald-100 text-emerald-800 flex items-center justify-center font-extrabold text-base shadow-inner">
@@ -1447,7 +1507,6 @@
             </button>
           </div>
 
-          <!-- Backup & Migration -->
           <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm space-y-3">
             <h4 class="text-xs font-extrabold text-slate-400 uppercase tracking-wider">Backup & Account Transfer</h4>
             
@@ -1475,7 +1534,6 @@
             </div>
           </div>
 
-          <!-- Contact Card -->
           <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm space-y-3.5">
             <h4 class="text-xs font-extrabold text-slate-400 uppercase tracking-wider">Contact Us</h4>
             
@@ -1532,12 +1590,11 @@
             </a>
           </div>
         </div>
-
       </div>
 
     </div>
 
-    <!-- MOBILE BOTTOM NAVIGATION (Hidden on PC >= 768px) -->
+    <!-- MOBILE BOTTOM NAVIGATION -->
     <nav class="md:hidden fixed bottom-0 max-w-md w-full bg-white border-t border-slate-200 flex z-30 shadow-lg">
       <button id="tab-btn-ledger" onclick="switchTab('ledger')" class="flex-1 py-2.5 text-center text-emerald-700 font-extrabold text-xs flex flex-col items-center gap-1 border-t-2 border-emerald-600 transition">
         <span class="text-base">📖</span> Khata
@@ -1552,10 +1609,9 @@
 
   </div>
 
-  <!-- 4. CUSTOMER LEDGER MODAL (Only Used on Mobile Screens) -->
+  <!-- 4. CUSTOMER LEDGER MODAL (Mobile Only) -->
   <div id="tx-modal" onclick="closeModal()" class="md:hidden hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-end justify-center p-0">
     <div onclick="event.stopPropagation()" class="bg-white w-full max-w-md max-h-[92vh] rounded-t-3xl p-5 shadow-2xl flex flex-col overflow-hidden animate-in">
-      
       <div class="flex justify-between items-start pb-3 border-b border-slate-100">
         <div>
           <h3 id="modal-cust-name" class="text-base font-extrabold text-slate-900 leading-tight"></h3>
@@ -1576,7 +1632,6 @@
       </div>
 
       <div class="pt-3 border-t border-slate-100 bg-slate-50/80 -mx-5 -mb-5 p-5 rounded-b-3xl space-y-3">
-        
         <div id="photo-preview-container" class="hidden flex items-center justify-between bg-white border border-emerald-200 p-2 rounded-xl shadow-sm">
           <div class="flex items-center gap-2">
             <img id="photo-preview-thumb" class="w-8 h-8 rounded-lg object-cover border border-emerald-300" src="">
@@ -1602,10 +1657,10 @@
         </div>
 
         <div class="grid grid-cols-2 gap-2">
-          <button onclick="addTransaction('diye')" class="py-2.5 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white text-xs font-bold rounded-xl shadow-md shadow-rose-600/10 transition flex items-center justify-center gap-1.5">
+          <button onclick="addTransaction('diye')" class="py-2.5 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white text-xs font-bold rounded-xl shadow-md transition flex items-center justify-center gap-1.5">
             <span>🔴</span> CASH OUT
           </button>
-          <button onclick="addTransaction('liye')" class="py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-bold rounded-xl shadow-md shadow-emerald-600/10 transition flex items-center justify-center gap-1.5">
+          <button onclick="addTransaction('liye')" class="py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-bold rounded-xl shadow-md transition flex items-center justify-center gap-1.5">
             <span>🟢</span> CASH IN
           </button>
         </div>
@@ -1619,7 +1674,6 @@
           </button>
         </div>
       </div>
-
     </div>
   </div>
 
