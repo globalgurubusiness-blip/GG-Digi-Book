@@ -48,9 +48,6 @@
     let currentTransactions = [];
     let unsubscribeTx = null;
     let attachedPhotoBase64 = "";
-
-    let appCalculatedNetBalance = 0;
-    let pendingEntryType = 'diye';
     let gallaTxHistory = [];
 
     // Web Audio Synthesizer Engine
@@ -157,6 +154,19 @@
       }
     };
 
+    // Math Formula Evaluator for Amount Calculator
+    window.evaluateExpression = (inputVal) => {
+      if (!inputVal) return 0;
+      let cleaned = inputVal.toString().replace(/[^0-9+\-*/().]/g, '');
+      if (!cleaned) return 0;
+      try {
+        const result = Function(`'use strict'; return (${cleaned})`)();
+        return isNaN(result) ? 0 : Number(result);
+      } catch (e) {
+        return 0;
+      }
+    };
+
     onAuthStateChanged(auth, (user) => {
       currentUser = user;
       if (user) {
@@ -211,7 +221,6 @@
         accountsView.classList.remove('hidden');
         tabAccountsBtn.className = activeClass;
         populateAccountSelectDropdown();
-        calculateSingleGallaAudit();
       } else if (tab === 'settings') {
         settingsView.classList.remove('hidden');
         tabSettingsBtn.className = activeClass;
@@ -236,8 +245,6 @@
         document.getElementById('total-payable').innerText = `Rs. ${totalPayable.toLocaleString()}`;
 
         const net = totalReceivable - totalPayable;
-        appCalculatedNetBalance = net;
-
         const netEl = document.getElementById('net-balance');
         const netStatusEl = document.getElementById('net-status');
         const custCountEl = document.getElementById('customer-total-count');
@@ -261,7 +268,6 @@
 
         renderCustomers();
         populateAccountSelectDropdown();
-        calculateSingleGallaAudit();
       }, (err) => console.error("Firestore Error:", err));
     }
 
@@ -385,6 +391,8 @@
       document.getElementById('modal-cust-phone').innerText = cust.phone || 'No phone available';
       updateModalBalanceUI();
       clearPhotoAttachment();
+      document.getElementById('tx-amount').value = '';
+      document.getElementById('tx-note').value = '';
       document.getElementById('tx-modal').classList.remove('hidden');
       loadCustomerTransactions(cust.id);
     };
@@ -453,49 +461,51 @@
       if (unsubscribeTx) unsubscribeTx();
     };
 
-    window.openEntrySheet = (type) => {
-      playSound('tap');
-      pendingEntryType = type;
-      const titleEl = document.getElementById('entry-mode-title');
-      titleEl.innerText = type === 'diye' ? 'Cash Out (You Gave)' : 'Cash In (You Got)';
-      titleEl.className = type === 'diye' ? 'text-base font-extrabold text-rose-600' : 'text-base font-extrabold text-emerald-600';
-      document.getElementById('entry-mode-sheet').classList.remove('hidden');
-    };
-
-    window.closeEntrySheet = () => {
-      playSound('close');
-      document.getElementById('entry-mode-sheet').classList.add('hidden');
-    };
-
-    window.selectEntryMode = (mode) => {
-      closeEntrySheet();
-      if (mode === 'image') {
-        document.getElementById('receipt-camera-input').click();
-      } else if (mode === 'voice') {
-        startSpeechRecognition();
-      } else {
-        document.getElementById('tx-amount').focus();
+    // Calculate formula in real-time or on Enter key
+    window.handleFormulaInput = (event, type = 'diye') => {
+      const raw = event.target.value;
+      if (/[+\-*/]/.test(raw)) {
+        const val = evaluateExpression(raw);
+        if (val > 0) {
+          event.target.title = `Calculated: Rs. ${val}`;
+        }
+      }
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        const calculated = evaluateExpression(raw);
+        if (calculated > 0) {
+          event.target.value = calculated;
+        }
+        addTransaction(type);
       }
     };
 
-    window.submitQuickEntry = () => {
-      closeEntrySheet();
-      addTransaction(pendingEntryType);
+    window.handleGallaFormulaInput = (event, actionType = 'in') => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        const raw = event.target.value;
+        const calculated = evaluateExpression(raw);
+        if (calculated > 0) {
+          event.target.value = calculated;
+        }
+        processGallaAccountEntry(actionType);
+      }
     };
 
     window.addTransaction = async (type) => {
       const amountInput = document.getElementById('tx-amount');
       const noteInput = document.getElementById('tx-note');
-      const amount = parseFloat(amountInput.value);
-
-      if (!amount || amount <= 0) {
-        alert("Please enter a valid amount");
+      
+      const evaluated = evaluateExpression(amountInput.value);
+      if (!evaluated || evaluated <= 0) {
+        alert("Please enter a valid amount or formula (e.g. 500+6000)");
         return;
       }
 
+      amountInput.value = evaluated;
       playSound(type === 'diye' ? 'debit' : 'credit');
 
-      const balanceDiff = (type === 'diye') ? amount : -amount;
+      const balanceDiff = (type === 'diye') ? evaluated : -evaluated;
       const newBal = (selectedCustomer.balance || 0) + balanceDiff;
 
       try {
@@ -505,7 +515,7 @@
           customerId: selectedCustomer.id,
           customerName: selectedCustomer.name,
           type: type,
-          amount: amount,
+          amount: evaluated,
           note: noteInput.value.trim(),
           receiptImage: attachedPhotoBase64 || "",
           createdAt: new Date().toISOString()
@@ -522,25 +532,25 @@
       }
     };
 
-    // Direct Cash In & Cash Out Linked to Accounts (Jazz, Zong, etc.)
     window.processGallaAccountEntry = async (actionType) => {
       const partySelect = document.getElementById('galla-party-select');
       const amountInput = document.getElementById('galla-entry-amount');
       const noteInput = document.getElementById('galla-entry-note');
 
       const customerId = partySelect.value;
-      const amount = parseFloat(amountInput.value);
+      const evaluated = evaluateExpression(amountInput.value);
       const note = noteInput.value.trim();
 
       if (!customerId) {
         alert("Pehle Account / Party (e.g. Jazz, Zong, JazzCash) select karein!");
         return;
       }
-      if (!amount || amount <= 0) {
-        alert("Please enter a valid amount!");
+      if (!evaluated || evaluated <= 0) {
+        alert("Please enter a valid amount or formula (e.g. 500+6000)!");
         return;
       }
 
+      amountInput.value = evaluated;
       const partyObj = customersList.find(c => c.id === customerId);
       if (!partyObj) return;
 
@@ -548,14 +558,12 @@
       let partyBalanceDiff = 0;
 
       if (actionType === 'in') {
-        // Galle mein paisa AAYA: Party se minus hoga
-        txTypeForParty = 'liye'; // Credit party account (- balance)
-        partyBalanceDiff = -amount;
+        txTypeForParty = 'liye';
+        partyBalanceDiff = -evaluated;
         playSound('credit');
       } else {
-        // Galle se paisa GAYA: Party mein jama hoga
-        txTypeForParty = 'diye'; // Debit party account (+ balance)
-        partyBalanceDiff = amount;
+        txTypeForParty = 'diye';
+        partyBalanceDiff = evaluated;
         playSound('debit');
       }
 
@@ -568,7 +576,7 @@
           customerId: partyObj.id,
           customerName: partyObj.name,
           type: txTypeForParty,
-          amount: amount,
+          amount: evaluated,
           note: note || (actionType === 'in' ? `Galla Cash In from ${partyObj.name}` : `Galla Cash Out to ${partyObj.name}`),
           isGallaReconciled: true,
           gallaAction: actionType,
@@ -614,40 +622,6 @@
         listEl.appendChild(row);
       });
     }
-
-    window.calculateSingleGallaAudit = () => {
-      const gallaInputVal = parseFloat(document.getElementById('single-galla-amount').value) || 0;
-      document.getElementById('total-physical-cash').innerText = `Rs. ${gallaInputVal.toLocaleString()}`;
-
-      const expectedAmount = appCalculatedNetBalance;
-      document.getElementById('expected-app-cash').innerText = `Rs. ${expectedAmount.toLocaleString()}`;
-
-      const diff = gallaInputVal - expectedAmount;
-      const diffEl = document.getElementById('audit-difference');
-      const badgeEl = document.getElementById('audit-status-badge');
-
-      diffEl.innerText = `Rs. ${Math.abs(diff).toLocaleString()}`;
-
-      if (diff === 0) {
-        diffEl.className = "text-2xl font-black text-emerald-600 tracking-tight";
-        badgeEl.className = "text-xs font-bold px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300";
-        badgeEl.innerText = "✅ Exact Match (Galla aur GG Digi Book Barabar)";
-      } else if (diff < 0) {
-        diffEl.className = "text-2xl font-black text-rose-600 tracking-tight";
-        badgeEl.className = "text-xs font-bold px-3 py-1 rounded-full bg-rose-100 text-rose-800 border border-rose-300";
-        badgeEl.innerText = `⚠️ Cash Short (Gally me Rs. ${Math.abs(diff).toLocaleString()} Kam Hain)`;
-      } else {
-        diffEl.className = "text-2xl font-black text-blue-600 tracking-tight";
-        badgeEl.className = "text-xs font-bold px-3 py-1 rounded-full bg-blue-100 text-blue-800 border border-blue-300";
-        badgeEl.innerText = `💡 Excess Cash (Gally me Rs. ${diff.toLocaleString()} Ziada Hain)`;
-      }
-    };
-
-    window.resetGallaInput = () => {
-      playSound('tap');
-      document.getElementById('single-galla-amount').value = '';
-      calculateSingleGallaAudit();
-    };
 
     window.downloadBackup = async () => {
       playSound('tap');
@@ -1031,60 +1005,16 @@
       </div>
     </div>
 
-    <!-- PAGE 2: ACCOUNTS / GALLA ENTRY & RECONCILIATION -->
+    <!-- PAGE 2: ACCOUNTS / GALLA LINKED ENTRY VIEW (Audit Box Removed) -->
     <div id="view-accounts" class="hidden flex-1 p-4 pb-20 space-y-4 overflow-y-auto bg-slate-50/70">
       
-      <!-- Top Overview Audit Banner -->
-      <div class="bg-gradient-to-br from-slate-900 to-slate-800 text-white p-4 rounded-3xl shadow-lg space-y-3">
-        <div class="flex justify-between items-center">
-          <div>
-            <p class="text-[10px] font-bold text-emerald-400 uppercase tracking-wider">Reconciliation Audit</p>
-            <h3 class="text-sm font-extrabold text-white">Galla Cash vs GG Digi Book</h3>
-          </div>
-          <button onclick="resetGallaInput()" class="text-[10px] font-bold bg-white/10 hover:bg-white/20 px-2.5 py-1 rounded-lg transition active:scale-95">
-            🔄 Reset
-          </button>
-        </div>
-
-        <div class="grid grid-cols-2 gap-2 pt-1 border-t border-white/10">
-          <div class="bg-white/5 p-2.5 rounded-xl">
-            <p class="text-[10px] text-slate-300 font-medium">Galla Physical Cash</p>
-            <h4 id="total-physical-cash" class="text-base font-extrabold text-emerald-300 mt-0.5">Rs. 0</h4>
-          </div>
-          <div class="bg-white/5 p-2.5 rounded-xl">
-            <p class="text-[10px] text-slate-300 font-medium">GG Digi Book (Expected)</p>
-            <h4 id="expected-app-cash" class="text-base font-extrabold text-white mt-0.5">Rs. 0</h4>
-          </div>
-        </div>
-
-        <!-- Difference Result -->
-        <div class="bg-white p-3 rounded-2xl text-center space-y-1 shadow-inner">
-          <p class="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">Farq (Difference)</p>
-          <h2 id="audit-difference" class="text-2xl font-black text-slate-800 tracking-tight">Rs. 0</h2>
-          <div class="pt-1">
-            <span id="audit-status-badge" class="text-xs font-bold px-3 py-1 rounded-full bg-slate-100 text-slate-600">
-              Checking...
-            </span>
-          </div>
-        </div>
-      </div>
-
-      <!-- Single Direct Cash in Galla Entry Box -->
-      <div class="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm space-y-2">
-        <h4 class="text-xs font-extrabold text-slate-800 uppercase tracking-wider">Physical Galla Cash (Gin Kar Likhein)</h4>
-        <div class="relative">
-          <span class="absolute left-3.5 top-2.5 text-slate-400 font-bold text-sm">Rs.</span>
-          <input type="number" id="single-galla-amount" oninput="calculateSingleGallaAudit()" placeholder="0" class="w-full pl-11 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-base font-black text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition">
-        </div>
-      </div>
-
-      <!-- NEW FEATURE: GALLA ENTRY WITH ACCOUNT DEDUCTION/DEPOSIT -->
-      <div class="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm space-y-3">
+      <!-- Galla Entry With Linked Accounts & Calculator -->
+      <div class="bg-white p-4 rounded-3xl border border-slate-200/80 shadow-sm space-y-3">
         <div class="flex items-center justify-between">
-          <h4 class="text-xs font-extrabold text-slate-800 uppercase tracking-wider">Galla Entry With Account Link</h4>
-          <span class="text-[10px] font-bold bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-md">Live Sync</span>
+          <h4 class="text-xs font-extrabold text-slate-800 uppercase tracking-wider">Galla Entry (Account Link & Calculator)</h4>
+          <span class="text-[10px] font-bold bg-emerald-50 text-emerald-700 px-2.5 py-0.5 rounded-full">Active</span>
         </div>
-        <p class="text-[11px] text-slate-400">Galle me paise aane ya jaane par party/account (Jazz, Zong, JazzCash) select karein:</p>
+        <p class="text-[11px] text-slate-400">Account select karein aur formula likh kar Enter karein (jaise <code>500+6000</code>):</p>
 
         <!-- Account Selector -->
         <div>
@@ -1092,9 +1022,13 @@
           <select id="galla-party-select" class="w-full text-xs font-bold p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:border-emerald-500 outline-none"></select>
         </div>
 
+        <!-- Amount Box With Calculator (Enter-to-Submit) -->
         <div class="grid grid-cols-2 gap-2">
-          <input type="number" id="galla-entry-amount" placeholder="Amount (Rs.)" class="w-full text-xs font-bold p-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-emerald-500">
-          <input type="text" id="galla-entry-note" placeholder="Description/Note" class="w-full text-xs p-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-emerald-500">
+          <div>
+            <input type="text" id="galla-entry-amount" onkeydown="handleGallaFormulaInput(event, 'in')" placeholder="Amount or 500+6000" class="w-full text-xs font-bold p-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-emerald-500">
+            <span class="text-[9px] text-slate-400 mt-0.5 block font-medium">Supports +, -, *, /</span>
+          </div>
+          <input type="text" id="galla-entry-note" onkeydown="if(event.key==='Enter') processGallaAccountEntry('in')" placeholder="Description/Note" class="w-full text-xs p-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-emerald-500">
         </div>
 
         <!-- 2 Action Buttons -->
@@ -1112,8 +1046,8 @@
         </div>
       </div>
 
-      <!-- Recent Cash Book Entries Table -->
-      <div class="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm space-y-2">
+      <!-- Recent Cash Book Activity Table -->
+      <div class="bg-white p-4 rounded-3xl border border-slate-200/80 shadow-sm space-y-2">
         <h4 class="text-xs font-extrabold text-slate-800 uppercase tracking-wider">Cash Book Activity (History)</h4>
         <div class="overflow-x-auto">
           <table class="w-full text-left border-collapse">
@@ -1284,7 +1218,7 @@
 
   </div>
 
-  <!-- 4. CUSTOMER LEDGER MODAL -->
+  <!-- 4. CUSTOMER LEDGER MODAL (Direct Enter Key & Calculator Support) -->
   <div id="tx-modal" onclick="closeModal()" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
     <div onclick="event.stopPropagation()" class="bg-white w-full max-w-md max-h-[92vh] rounded-t-3xl sm:rounded-3xl p-5 shadow-2xl flex flex-col overflow-hidden animate-in">
       
@@ -1309,7 +1243,7 @@
         <div id="tx-history-list" class="space-y-1.5"></div>
       </div>
 
-      <!-- Entry Form & Actions -->
+      <!-- Entry Form & Actions (Direct Submit on Enter) -->
       <div class="pt-3 border-t border-slate-100 bg-slate-50/80 -mx-5 -mb-5 p-5 rounded-b-3xl space-y-3">
         
         <!-- Photo Preview -->
@@ -1322,10 +1256,13 @@
         </div>
 
         <div class="grid grid-cols-2 gap-2">
-          <input type="number" id="tx-amount" placeholder="Amount (Rs.)" class="w-full text-sm font-bold p-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none">
+          <div>
+            <input type="text" id="tx-amount" onkeydown="handleFormulaInput(event, 'diye')" placeholder="Amount or 500+6000" class="w-full text-xs font-bold p-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none">
+            <span class="text-[9px] text-slate-400 mt-0.5 block font-medium">Type math & press Enter</span>
+          </div>
           
           <div class="relative flex items-center">
-            <input type="text" id="tx-note" placeholder="Note / Description" class="w-full text-xs p-2.5 pr-14 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none">
+            <input type="text" id="tx-note" onkeydown="if(event.key==='Enter') addTransaction('diye')" placeholder="Note / Description" class="w-full text-xs p-2.5 pr-14 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none">
             <div class="absolute right-1.5 flex items-center gap-1">
               <button id="mic-btn" onclick="startSpeechRecognition()" title="Voice to Text" class="p-1 rounded-lg text-slate-400 hover:text-emerald-700 text-sm transition">🎙️</button>
               <label for="receipt-camera-input" title="Attach Receipt/Bill" class="p-1 rounded-lg text-slate-400 hover:text-emerald-700 text-sm cursor-pointer transition">📸</label>
@@ -1334,13 +1271,13 @@
           </div>
         </div>
 
-        <!-- Cash In / Cash Out Action Buttons -->
+        <!-- Direct Action Buttons (Instant Save Without Popup) -->
         <div class="grid grid-cols-2 gap-2">
-          <button onclick="openEntrySheet('diye')" class="py-2.5 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white text-xs font-bold rounded-xl shadow-md shadow-rose-600/10 transition flex items-center justify-center gap-1.5">
-            <span>🔴</span> CASH OUT
+          <button onclick="addTransaction('diye')" class="py-2.5 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white text-xs font-bold rounded-xl shadow-md shadow-rose-600/10 transition flex items-center justify-center gap-1.5">
+            <span>🔴</span> CASH OUT (You Gave)
           </button>
-          <button onclick="openEntrySheet('liye')" class="py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-bold rounded-xl shadow-md shadow-emerald-600/10 transition flex items-center justify-center gap-1.5">
-            <span>🟢</span> CASH IN
+          <button onclick="addTransaction('liye')" class="py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-bold rounded-xl shadow-md shadow-emerald-600/10 transition flex items-center justify-center gap-1.5">
+            <span>🟢</span> CASH IN (You Got)
           </button>
         </div>
 
@@ -1354,40 +1291,6 @@
         </div>
       </div>
 
-    </div>
-  </div>
-
-  <!-- 5. ENTRY MODE MODAL (Auto Closes on Select/Enter) -->
-  <div id="entry-mode-sheet" onclick="closeEntrySheet()" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-    <div onclick="event.stopPropagation()" class="bg-white w-full max-w-sm rounded-t-3xl sm:rounded-3xl p-5 shadow-2xl space-y-4">
-      <div class="text-center">
-        <h4 id="entry-mode-title" class="text-base font-extrabold text-slate-900">Choose Entry Mode</h4>
-        <p class="text-xs text-slate-400 mt-0.5">Select how you want to record this transaction</p>
-      </div>
-
-      <div class="grid grid-cols-3 gap-2 text-center pt-2">
-        <button onclick="selectEntryMode('image')" class="p-3 rounded-2xl bg-orange-50 border border-orange-200/80 hover:bg-orange-100 transition flex flex-col items-center">
-          <span class="text-2xl mb-1">📸</span>
-          <span class="text-xs font-extrabold text-orange-900">Image</span>
-          <span class="text-[9px] text-orange-700/80 mt-0.5">Scan / Bill</span>
-        </button>
-
-        <button onclick="selectEntryMode('voice')" class="p-3 rounded-2xl bg-indigo-50 border border-indigo-200/80 hover:bg-indigo-100 transition flex flex-col items-center">
-          <span class="text-2xl mb-1">🎙️</span>
-          <span class="text-xs font-extrabold text-indigo-900">Voice</span>
-          <span class="text-[9px] text-indigo-700/80 mt-0.5">Bol Kar Likhein</span>
-        </button>
-
-        <button onclick="selectEntryMode('manual')" class="p-3 rounded-2xl bg-emerald-50 border border-emerald-200/80 hover:bg-emerald-100 transition flex flex-col items-center">
-          <span class="text-2xl mb-1">⌨️</span>
-          <span class="text-xs font-extrabold text-emerald-900">Manual</span>
-          <span class="text-[9px] text-emerald-700/80 mt-0.5">Type Karein</span>
-        </button>
-      </div>
-
-      <button onclick="submitQuickEntry()" class="w-full py-3 bg-slate-900 text-white rounded-xl text-xs font-bold hover:bg-black transition active:scale-95">
-        Confirm & Save Entry
-      </button>
     </div>
   </div>
 
