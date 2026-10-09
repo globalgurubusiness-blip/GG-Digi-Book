@@ -5,9 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>GG Digi Book - Digital Ledger</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <!-- Google Font -->
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <!-- jsPDF & AutoTable -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
 
@@ -16,7 +14,6 @@
     .glass-card { background: rgba(255, 255, 255, 0.96); backdrop-filter: blur(10px); }
   </style>
 
-  <!-- Firebase SDKs -->
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
     import { 
@@ -50,13 +47,11 @@
     let attachedPhotoBase64 = "";
     let gallaTxHistory = [];
 
-    // Galla Rolling Balances
     let gallaOpeningBalance = 0;
     let gallaTotalIn = 0;
     let gallaTotalOut = 0;
     let gallaClosingCash = 0;
 
-    // Web Audio Synthesizer Engine
     let audioCtx = null;
     function getAudioCtx() {
       if (!audioCtx) {
@@ -278,7 +273,6 @@
       }, (err) => console.error("Firestore Error:", err));
     }
 
-    // Galla Metadata (Opening Balance Sync)
     function listenGallaMetadata() {
       const metaRef = doc(db, "galla_meta", currentUser.uid);
       onSnapshot(metaRef, (docSnap) => {
@@ -303,12 +297,13 @@
           const data = { id: docSnap.id, ...docSnap.data() };
           gallaTxHistory.push(data);
 
-          if (data.isGallaEntry) {
-            if (data.gallaAction === 'in') {
-              gallaTotalIn += Number(data.amount || 0);
-            } else if (data.gallaAction === 'out') {
-              gallaTotalOut += Number(data.amount || 0);
-            }
+          const isCashIn = (data.gallaAction === 'in') || (data.type === 'liye');
+          const isCashOut = (data.gallaAction === 'out') || (data.type === 'diye');
+
+          if (isCashIn) {
+            gallaTotalIn += Number(data.amount || 0);
+          } else if (isCashOut) {
+            gallaTotalOut += Number(data.amount || 0);
           }
         });
 
@@ -657,17 +652,15 @@
       if (!listEl) return;
       listEl.innerHTML = '';
 
-      const filteredGallaTx = gallaTxHistory.filter(t => t.isGallaEntry);
-
-      if (filteredGallaTx.length === 0) {
+      if (gallaTxHistory.length === 0) {
         listEl.innerHTML = '<tr><td colspan="4" class="p-4 text-center text-xs text-slate-400">No cash entries recorded yet.</td></tr>';
         return;
       }
 
-      filteredGallaTx.slice(0, 15).forEach(t => {
+      gallaTxHistory.slice(0, 25).forEach(t => {
         const row = document.createElement('tr');
         row.className = "border-b border-slate-100 hover:bg-slate-50 text-xs";
-        const isCashIn = t.gallaAction === 'in';
+        const isCashIn = (t.gallaAction === 'in') || (t.type === 'liye');
         const dateStr = new Date(t.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
 
         row.innerHTML = `
@@ -1006,7 +999,6 @@
   <!-- 2. MAIN APP WRAPPER -->
   <div id="app-screen" class="hidden max-w-md mx-auto bg-white min-h-screen shadow-2xl flex flex-col relative border-x border-slate-100">
     
-    <!-- Top Header -->
     <header class="bg-gradient-to-r from-emerald-800 to-emerald-700 text-white p-4 flex justify-between items-center shadow-lg sticky top-0 z-20">
       <div class="flex items-center gap-3">
         <img src="logo.png" alt="GG Logo" class="w-10 h-10 rounded-full bg-white p-0.5 object-contain shadow-md ring-2 ring-emerald-400/30">
@@ -1022,7 +1014,6 @@
 
     <!-- PAGE 1: LEDGER VIEW -->
     <div id="view-ledger" class="flex-1 flex flex-col pb-16">
-      <!-- Net Balance & Summary Cards -->
       <div class="p-4 bg-gradient-to-b from-emerald-50/60 to-transparent border-b border-slate-100 space-y-3">
         <div class="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-sm flex items-center justify-between">
           <div>
@@ -1053,7 +1044,6 @@
         </div>
       </div>
 
-      <!-- Search & Filters -->
       <div class="px-4 py-3 bg-white border-b border-slate-100 space-y-2.5">
         <div class="relative">
           <input type="text" id="search-input" oninput="renderCustomers()" placeholder="Search customer by name or phone..." class="w-full bg-slate-50 pl-9 pr-4 py-2.5 text-xs rounded-xl border border-slate-200/80 outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition">
@@ -1066,10 +1056,8 @@
         </div>
       </div>
 
-      <!-- Customer List -->
       <div id="customer-list" class="flex-1 overflow-y-auto divide-y divide-slate-100"></div>
 
-      <!-- Add Customer Floating Bar -->
       <div class="p-3 bg-white/95 border-t border-slate-100 sticky bottom-14 z-10 backdrop-blur-md">
         <button onclick="addNewCustomer()" class="w-full py-3 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white font-bold rounded-2xl shadow-lg shadow-emerald-600/20 flex items-center justify-center gap-2 transition text-sm">
           <span class="text-lg leading-none font-black">+</span> Add New Customer
@@ -1077,7 +1065,7 @@
       </div>
     </div>
 
-    <!-- PAGE 2: ACCOUNTS / GALLA WITH OPENING & CLOSING STRIP -->
+    <!-- PAGE 2: ACCOUNTS / GALLA WITH PERSISTENT ROLLING BALANCE -->
     <div id="view-accounts" class="hidden flex-1 p-4 pb-20 space-y-4 overflow-y-auto bg-slate-50/70">
       
       <!-- TOP STRIP: OPENING, CASH IN, CASH OUT, CLOSING CASH -->
@@ -1088,7 +1076,6 @@
         </div>
 
         <div class="grid grid-cols-4 gap-1.5 text-center">
-          <!-- 1. Opening Balance -->
           <div class="bg-slate-50 p-2 rounded-2xl border border-slate-100 flex flex-col justify-between">
             <div class="flex items-center justify-center gap-1">
               <span class="text-[9px] font-bold text-slate-500 uppercase">Opening</span>
@@ -1097,19 +1084,16 @@
             <h5 id="galla-strip-opening" class="text-xs font-black text-slate-800 mt-1">Rs. 0</h5>
           </div>
 
-          <!-- 2. Cash In -->
           <div class="bg-emerald-50/60 p-2 rounded-2xl border border-emerald-100 flex flex-col justify-between">
             <span class="text-[9px] font-bold text-emerald-700 uppercase">Cash In (+)</span>
             <h5 id="galla-strip-in" class="text-xs font-black text-emerald-600 mt-1">Rs. 0</h5>
           </div>
 
-          <!-- 3. Cash Out -->
           <div class="bg-rose-50/60 p-2 rounded-2xl border border-rose-100 flex flex-col justify-between">
             <span class="text-[9px] font-bold text-rose-700 uppercase">Cash Out (-)</span>
             <h5 id="galla-strip-out" class="text-xs font-black text-rose-600 mt-1">Rs. 0</h5>
           </div>
 
-          <!-- 4. Closing Cash -->
           <div class="bg-slate-900 text-white p-2 rounded-2xl shadow-sm flex flex-col justify-between">
             <span class="text-[9px] font-bold text-emerald-400 uppercase">Closing</span>
             <h5 id="galla-strip-closing" class="text-xs font-black text-white mt-1">Rs. 0</h5>
@@ -1117,7 +1101,7 @@
         </div>
       </div>
 
-      <!-- Galla Entry With Linked Accounts & Calculator -->
+      <!-- Galla Entry Box with Calculator & Enter Support -->
       <div class="bg-white p-4 rounded-3xl border border-slate-200/80 shadow-sm space-y-3">
         <div class="flex items-center justify-between">
           <h4 class="text-xs font-extrabold text-slate-800 uppercase tracking-wider">Galla Entry (Account Link & Calculator)</h4>
@@ -1125,13 +1109,11 @@
         </div>
         <p class="text-[11px] text-slate-400">Account select karein aur formula likh kar Enter karein (jaise <code>500+6000</code>):</p>
 
-        <!-- Account Selector -->
         <div>
           <label class="text-[10px] font-bold text-slate-500 block mb-1">Select Account / Party:</label>
           <select id="galla-party-select" class="w-full text-xs font-bold p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:border-emerald-500 outline-none"></select>
         </div>
 
-        <!-- Amount Box With Calculator (Enter-to-Submit) -->
         <div class="grid grid-cols-2 gap-2">
           <div>
             <input type="text" id="galla-entry-amount" onkeydown="handleGallaFormulaInput(event, 'in')" placeholder="Amount or 500+6000" class="w-full text-xs font-bold p-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-emerald-500">
@@ -1140,14 +1122,11 @@
           <input type="text" id="galla-entry-note" onkeydown="if(event.key==='Enter') processGallaAccountEntry('in')" placeholder="Description/Note" class="w-full text-xs p-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-emerald-500">
         </div>
 
-        <!-- 2 Action Buttons -->
         <div class="grid grid-cols-2 gap-2 pt-1">
-          <!-- CASH IN -->
           <button onclick="processGallaAccountEntry('in')" class="py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-black rounded-xl shadow-md transition flex flex-col items-center">
             <span>+ CASH IN (Aaya)</span>
             <span class="text-[9px] font-normal text-emerald-100">Galla +, Account Minus</span>
           </button>
-          <!-- CASH OUT -->
           <button onclick="processGallaAccountEntry('out')" class="py-2.5 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white text-xs font-black rounded-xl shadow-md transition flex flex-col items-center">
             <span>- CASH OUT (Gaya)</span>
             <span class="text-[9px] font-normal text-rose-100">Galla -, Account Plus</span>
@@ -1155,7 +1134,7 @@
         </div>
       </div>
 
-      <!-- Recent Cash Book Activity Table -->
+      <!-- Persistent Cash Book Activity History -->
       <div class="bg-white p-4 rounded-3xl border border-slate-200/80 shadow-sm space-y-2">
         <h4 class="text-xs font-extrabold text-slate-800 uppercase tracking-wider">Cash Book Activity (History)</h4>
         <div class="overflow-x-auto">
@@ -1178,7 +1157,6 @@
     <!-- PAGE 3: SETTINGS & MORE VIEW -->
     <div id="view-settings" class="hidden flex-1 p-4 pb-20 space-y-4 overflow-y-auto bg-slate-50/60">
       
-      <!-- Account Profile Card -->
       <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
         <div class="flex items-center gap-3">
           <div class="w-12 h-12 rounded-full bg-emerald-100 text-emerald-800 flex items-center justify-center font-extrabold text-base shadow-inner">
@@ -1194,11 +1172,9 @@
         </button>
       </div>
 
-      <!-- Data Backup & Account Transfer Section -->
       <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3">
         <h4 class="text-xs font-extrabold text-slate-400 uppercase tracking-wider">Backup & Account Transfer</h4>
         
-        <!-- Export Backup -->
         <div class="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-100">
           <div>
             <h5 class="text-xs font-bold text-slate-800">Export Backup</h5>
@@ -1209,7 +1185,6 @@
           </button>
         </div>
 
-        <!-- Import / Shift Account Feature -->
         <div class="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-100">
           <div>
             <h5 class="text-xs font-bold text-slate-800">Import / Restore Ledger</h5>
@@ -1224,11 +1199,9 @@
         </div>
       </div>
 
-      <!-- Contact Us & Social Media Hub -->
       <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3.5">
         <h4 class="text-xs font-extrabold text-slate-400 uppercase tracking-wider">Contact Us</h4>
         
-        <!-- Direct WhatsApp Card Button -->
         <a href="https://wa.me/923027374880?text=Hello%20GG%20Digi%20Book%20Support" target="_blank" class="w-full flex items-center justify-between p-3.5 rounded-2xl bg-emerald-500 hover:bg-emerald-600 text-white transition active:scale-[0.98] shadow-md shadow-emerald-500/20">
           <div class="flex items-center gap-3">
             <div class="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center text-lg">
@@ -1244,12 +1217,10 @@
           </span>
         </a>
 
-        <!-- Social Media Grid Icons -->
         <div>
           <p class="text-[11px] font-bold text-slate-500 mb-2.5">Connect Across Platforms</p>
           <div class="grid grid-cols-5 gap-2">
             
-            <!-- YouTube -->
             <a href="https://www.youtube.com/@globalguruofficial1" target="_blank" title="YouTube" class="flex flex-col items-center justify-center p-2.5 rounded-2xl bg-white border border-slate-200/80 hover:border-red-500 hover:shadow-md transition active:scale-95 shadow-sm">
               <svg class="w-6 h-6 text-[#FF0000]" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
@@ -1257,7 +1228,6 @@
               <span class="text-[9px] font-bold text-slate-700 mt-1.5">YouTube</span>
             </a>
 
-            <!-- Facebook -->
             <a href="https://web.facebook.com/globalguruofficial1" target="_blank" title="Facebook" class="flex flex-col items-center justify-center p-2.5 rounded-2xl bg-white border border-slate-200/80 hover:border-blue-600 hover:shadow-md transition active:scale-95 shadow-sm">
               <svg class="w-6 h-6 text-[#1877F2]" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
@@ -1265,7 +1235,6 @@
               <span class="text-[9px] font-bold text-slate-700 mt-1.5">Facebook</span>
             </a>
 
-            <!-- Instagram -->
             <a href="https://instagram.com/globalguruofficial1" target="_blank" title="Instagram" class="flex flex-col items-center justify-center p-2.5 rounded-2xl bg-white border border-slate-200/80 hover:border-pink-500 hover:shadow-md transition active:scale-95 shadow-sm">
               <svg class="w-6 h-6 text-[#E4405F]" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/>
@@ -1273,7 +1242,6 @@
               <span class="text-[9px] font-bold text-slate-700 mt-1.5">Instagram</span>
             </a>
 
-            <!-- TikTok -->
             <a href="https://www.tiktok.com/@globalguruofficial" target="_blank" title="TikTok" class="flex flex-col items-center justify-center p-2.5 rounded-2xl bg-white border border-slate-200/80 hover:border-black hover:shadow-md transition active:scale-95 shadow-sm">
               <svg class="w-6 h-6 text-black" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M12.525.02c1.31-.02 2.61-.01 3.91-.02.08 1.53.63 3.09 1.75 4.17 1.12 1.11 2.7 1.62 4.24 1.79v4.03c-1.44-.05-2.89-.35-4.2-.97-.57-.26-1.1-.59-1.62-.99v9.09c-.03 2.01-.84 4.02-2.34 5.37-1.63 1.49-3.92 2.16-6.09 1.81-2.2-.33-4.22-1.67-5.35-3.58-1.16-1.92-1.34-4.37-.5-6.38.86-2.02 2.72-3.53 4.88-3.99.78-.17 1.58-.2 2.37-.12v4.22c-.61-.08-1.25-.01-1.83.21-.82.3-1.49.95-1.83 1.76-.36.85-.31 1.84.14 2.64.44.8 1.25 1.36 2.15 1.49.99.16 2.04-.15 2.77-.85.66-.63 1.05-1.53 1.05-2.45V.02h.65z"/>
@@ -1281,7 +1249,6 @@
               <span class="text-[9px] font-bold text-slate-700 mt-1.5">TikTok</span>
             </a>
 
-            <!-- Threads -->
             <a href="https://www.threads.net/@globalguruofficial1" target="_blank" title="Threads" class="flex flex-col items-center justify-center p-2.5 rounded-2xl bg-white border border-slate-200/80 hover:border-black hover:shadow-md transition active:scale-95 shadow-sm">
               <svg class="w-6 h-6 text-black" viewBox="0 0 192 192" fill="currentColor">
                 <path d="M141.537 88.9883C140.71 88.5919 139.87 88.2109 139.019 87.8456C137.537 60.5382 122.616 44.905 97.5619 44.745C97.4484 44.7443 97.3355 44.7443 97.222 44.7443C82.2364 44.7443 69.7731 51.1409 62.102 62.7807L75.5727 72.8138C81.0827 64.4538 89.2612 60.7788 97.2341 60.7788C110.748 60.7788 119.537 69.6013 120.487 84.1506C113.626 83.1756 106.376 82.8093 98.7188 83.0569C72.0625 83.9169 55.4544 98.2431 56.0969 119.349C56.7088 139.467 73.0688 152.012 94.0625 152.012C108.799 152.012 119.981 145.474 126.791 133.029C132.846 144.159 143.141 150.144 157.069 150.144C174.197 150.144 186.281 138.834 186.281 118.892C186.281 83.2181 158.469 64.9125 120.891 64.9125C78.435 64.9125 47.9625 87.9712 47.9625 125.683C47.9625 152.128 66.525 170.835 96.0938 170.835C112.575 170.835 126.338 165.176 135.038 154.512L147.244 165.816C134.906 180.705 116.794 187.688 96.0938 187.688C56.2875 187.688 30.7125 162.248 30.7125 125.683C30.7125 76.5412 69.4125 48.0675 120.891 48.0675C170.775 48.0675 203.531 73.7437 203.531 118.892C203.531 148.164 184.95 166.995 157.069 166.995C139.631 166.995 127.144 158.625 121.284 144.188C114.712 153.281 104.981 157.942 93.6844 157.942C77.475 157.942 65.5125 147.536 64.9969 131.627C64.4469 114.675 77.2969 103.568 98.2406 102.898C105.797 102.656 113.128 103.181 120.084 104.426C118.912 95.8425 112.444 89.9625 101.466 89.9625C95.4281 89.9625 89.8781 92.205 85.9406 96.225L75.6094 84.8812C81.8531 78.4725 90.75 74.8725 101.466 74.8725C119.869 74.8725 133.725 84.7725 136.003 103.886C137.944 104.839 139.791 105.889 141.537 107.031V88.9883ZM120.084 117.892C113.888 116.897 107.381 116.488 100.678 116.702C88.2469 117.098 79.9594 122.951 80.2875 131.957C80.6062 140.719 88.7531 146.104 99.4594 146.104C108.975 146.104 116.634 140.404 120.084 130.414V117.892Z"/>
@@ -1292,7 +1259,6 @@
           </div>
         </div>
 
-        <!-- Official Linktree Direct Hub Button -->
         <a href="https://linktr.ee/Globalguruofficial1" target="_blank" class="flex items-center justify-between p-3 rounded-xl bg-slate-50 hover:bg-emerald-50 border border-slate-100 transition">
           <div class="flex items-center gap-2.5">
             <span class="text-base">🌲</span>
@@ -1306,7 +1272,6 @@
 
       </div>
 
-      <!-- App Version Footer -->
       <div class="text-center py-2 text-slate-400 text-[11px] font-medium">
         GG Digi Book • Powered by Global Guru
       </div>
@@ -1331,7 +1296,6 @@
   <div id="tx-modal" onclick="closeModal()" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
     <div onclick="event.stopPropagation()" class="bg-white w-full max-w-md max-h-[92vh] rounded-t-3xl sm:rounded-3xl p-5 shadow-2xl flex flex-col overflow-hidden animate-in">
       
-      <!-- Modal Header -->
       <div class="flex justify-between items-start pb-3 border-b border-slate-100">
         <div>
           <h3 id="modal-cust-name" class="text-base font-extrabold text-slate-900 leading-tight"></h3>
@@ -1344,7 +1308,6 @@
         </div>
       </div>
 
-      <!-- Transaction History Scrollable -->
       <div class="flex-1 overflow-y-auto my-3 pr-1">
         <div class="flex justify-between items-center mb-2.5">
           <h5 class="text-[11px] font-extrabold text-slate-400 uppercase tracking-wider">Transaction History</h5>
@@ -1352,10 +1315,8 @@
         <div id="tx-history-list" class="space-y-1.5"></div>
       </div>
 
-      <!-- Entry Form & Actions -->
       <div class="pt-3 border-t border-slate-100 bg-slate-50/80 -mx-5 -mb-5 p-5 rounded-b-3xl space-y-3">
         
-        <!-- Photo Preview -->
         <div id="photo-preview-container" class="hidden flex items-center justify-between bg-white border border-emerald-200 p-2 rounded-xl shadow-sm">
           <div class="flex items-center gap-2">
             <img id="photo-preview-thumb" class="w-8 h-8 rounded-lg object-cover border border-emerald-300" src="">
@@ -1380,7 +1341,6 @@
           </div>
         </div>
 
-        <!-- Direct Action Buttons (Instant Save Without Popup) -->
         <div class="grid grid-cols-2 gap-2">
           <button onclick="addTransaction('diye')" class="py-2.5 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white text-xs font-bold rounded-xl shadow-md shadow-rose-600/10 transition flex items-center justify-center gap-1.5">
             <span>🔴</span> CASH OUT (You Gave)
