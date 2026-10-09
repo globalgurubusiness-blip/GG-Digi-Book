@@ -172,9 +172,14 @@
       if (user) {
         document.getElementById('login-screen').classList.add('hidden');
         document.getElementById('app-screen').classList.remove('hidden');
-        document.getElementById('user-name').innerText = user.displayName || user.email;
+        
+        const displayName = user.displayName || user.email;
+        document.getElementById('user-name').innerText = displayName;
+        document.getElementById('desktop-user-name').innerText = displayName;
+        document.getElementById('desktop-user-email').innerText = user.email || '';
         document.getElementById('settings-user-email').innerText = user.email || 'N/A';
-        document.getElementById('settings-user-name').innerText = user.displayName || 'Authorized User';
+        document.getElementById('settings-user-name').innerText = displayName;
+        
         loadCustomers();
         listenAllTransactions();
         listenGallaMetadata();
@@ -200,32 +205,48 @@
       const accountsView = document.getElementById('view-accounts');
       const settingsView = document.getElementById('view-settings');
 
+      // Mobile buttons
       const tabLedgerBtn = document.getElementById('tab-btn-ledger');
       const tabAccountsBtn = document.getElementById('tab-btn-accounts');
       const tabSettingsBtn = document.getElementById('tab-btn-settings');
+
+      // Desktop buttons
+      const dTabLedgerBtn = document.getElementById('d-tab-btn-ledger');
+      const dTabAccountsBtn = document.getElementById('d-tab-btn-accounts');
+      const dTabSettingsBtn = document.getElementById('d-tab-btn-settings');
 
       ledgerView.classList.add('hidden');
       accountsView.classList.add('hidden');
       settingsView.classList.add('hidden');
 
-      const inactiveClass = "flex-1 py-2.5 text-center text-slate-400 font-semibold text-xs flex flex-col items-center gap-1 border-t-2 border-transparent hover:text-slate-600 transition";
-      const activeClass = "flex-1 py-2.5 text-center text-emerald-700 font-extrabold text-xs flex flex-col items-center gap-1 border-t-2 border-emerald-600 transition";
+      const inactiveMob = "flex-1 py-2.5 text-center text-slate-400 font-semibold text-xs flex flex-col items-center gap-1 border-t-2 border-transparent hover:text-slate-600 transition";
+      const activeMob = "flex-1 py-2.5 text-center text-emerald-700 font-extrabold text-xs flex flex-col items-center gap-1 border-t-2 border-emerald-600 transition";
 
-      tabLedgerBtn.className = inactiveClass;
-      tabAccountsBtn.className = inactiveClass;
-      tabSettingsBtn.className = inactiveClass;
+      tabLedgerBtn.className = inactiveMob;
+      tabAccountsBtn.className = inactiveMob;
+      tabSettingsBtn.className = inactiveMob;
+
+      const inactiveDesk = "w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-slate-600 font-bold text-sm hover:bg-slate-100 transition";
+      const activeDesk = "w-full flex items-center gap-3 px-4 py-3 rounded-2xl bg-emerald-50 text-emerald-800 font-extrabold text-sm shadow-sm transition";
+
+      if (dTabLedgerBtn) dTabLedgerBtn.className = inactiveDesk;
+      if (dTabAccountsBtn) dTabAccountsBtn.className = inactiveDesk;
+      if (dTabSettingsBtn) dTabSettingsBtn.className = inactiveDesk;
 
       if (tab === 'ledger') {
         ledgerView.classList.remove('hidden');
-        tabLedgerBtn.className = activeClass;
+        tabLedgerBtn.className = activeMob;
+        if (dTabLedgerBtn) dTabLedgerBtn.className = activeDesk;
       } else if (tab === 'accounts') {
         accountsView.classList.remove('hidden');
-        tabAccountsBtn.className = activeClass;
+        tabAccountsBtn.className = activeMob;
+        if (dTabAccountsBtn) dTabAccountsBtn.className = activeDesk;
         populateAccountSelectDropdown();
         recalculateGallaStrip();
       } else if (tab === 'settings') {
         settingsView.classList.remove('hidden');
-        tabSettingsBtn.className = activeClass;
+        tabSettingsBtn.className = activeMob;
+        if (dTabSettingsBtn) dTabSettingsBtn.className = activeDesk;
       }
     };
 
@@ -270,6 +291,14 @@
 
         renderCustomers();
         populateAccountSelectDropdown();
+
+        if (selectedCustomer) {
+          const updated = customersList.find(c => c.id === selectedCustomer.id);
+          if (updated) {
+            selectedCustomer = updated;
+            updateCustomerDetailUI();
+          }
+        }
       }, (err) => console.error("Firestore Error:", err));
     }
 
@@ -373,8 +402,9 @@
 
       filtered.forEach(cust => {
         const item = document.createElement('div');
-        item.className = "p-4 flex justify-between items-center bg-white hover:bg-emerald-50/40 active:scale-[0.99] border-b border-gray-100 cursor-pointer transition";
-        item.onclick = () => openCustomerDetail(cust);
+        const isSelected = selectedCustomer && selectedCustomer.id === cust.id;
+        item.className = `p-4 flex justify-between items-center ${isSelected ? 'bg-emerald-50/80 border-l-4 border-emerald-600' : 'bg-white hover:bg-slate-50'} border-b border-gray-100 cursor-pointer transition`;
+        item.onclick = () => selectAndOpenCustomer(cust);
 
         const firstLetter = cust.name ? cust.name.charAt(0).toUpperCase() : 'C';
         const isReceivable = cust.balance > 0;
@@ -436,7 +466,7 @@
       const phone = prompt("Enter phone number (optional):") || "";
 
       try {
-        await addDoc(collection(db, "customers"), {
+        const docRef = await addDoc(collection(db, "customers"), {
           userId: currentUser.uid,
           name: name.trim(),
           phone: phone.trim(),
@@ -449,30 +479,54 @@
       }
     };
 
-    window.openCustomerDetail = (cust) => {
+    // Unified customer selector for both Mobile Modal and Desktop Side-by-Side Panel
+    window.selectAndOpenCustomer = (cust) => {
       playSound('tap');
       selectedCustomer = cust;
-      document.getElementById('modal-cust-name').innerText = cust.name;
-      document.getElementById('modal-cust-phone').innerText = cust.phone || 'No phone available';
-      updateModalBalanceUI();
+      renderCustomers();
+      updateCustomerDetailUI();
       clearPhotoAttachment();
-      document.getElementById('tx-amount').value = '';
-      document.getElementById('tx-note').value = '';
-      document.getElementById('tx-modal').classList.remove('hidden');
+      
+      // On mobile screen show modal, on PC show desktop right pane
+      if (window.innerWidth < 768) {
+        document.getElementById('tx-modal').classList.remove('hidden');
+      }
       loadCustomerTransactions(cust.id);
     };
 
-    function updateModalBalanceUI() {
+    function updateCustomerDetailUI() {
+      if (!selectedCustomer) return;
       const bal = selectedCustomer.balance || 0;
       const statusText = bal > 0 ? 'You Will Get' : bal < 0 ? 'You Will Give' : 'Settled';
-      const balEl = document.getElementById('modal-cust-balance');
-      balEl.innerText = `Rs. ${Math.abs(bal).toLocaleString()} (${statusText})`;
-      balEl.className = `text-xs font-bold mt-1 px-2.5 py-1 rounded-md inline-block ${bal > 0 ? 'bg-rose-50 text-rose-600' : bal < 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-gray-100 text-gray-600'}`;
+      const balClass = `text-xs font-bold px-2.5 py-1 rounded-md inline-block ${bal > 0 ? 'bg-rose-50 text-rose-600' : bal < 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-gray-100 text-gray-600'}`;
+
+      // Mobile Modal
+      document.getElementById('modal-cust-name').innerText = selectedCustomer.name;
+      document.getElementById('modal-cust-phone').innerText = selectedCustomer.phone || 'No phone available';
+      const mBalEl = document.getElementById('modal-cust-balance');
+      mBalEl.innerText = `Rs. ${Math.abs(bal).toLocaleString()} (${statusText})`;
+      mBalEl.className = balClass;
+
+      // Desktop Split Pane
+      const dPlaceholder = document.getElementById('desktop-no-customer-pane');
+      const dDetailPane = document.getElementById('desktop-customer-detail-pane');
+      if (dPlaceholder && dDetailPane) {
+        dPlaceholder.classList.add('hidden');
+        dDetailPane.classList.remove('hidden');
+        document.getElementById('d-cust-name').innerText = selectedCustomer.name;
+        document.getElementById('d-cust-phone').innerText = selectedCustomer.phone || 'No phone available';
+        const dBalEl = document.getElementById('d-cust-balance');
+        dBalEl.innerText = `Rs. ${Math.abs(bal).toLocaleString()} (${statusText})`;
+        dBalEl.className = balClass;
+      }
     }
 
     function loadCustomerTransactions(customerId) {
       const txListEl = document.getElementById('tx-history-list');
-      txListEl.innerHTML = '<p class="text-xs text-gray-400 text-center py-4">Loading transactions...</p>';
+      const dTxListEl = document.getElementById('d-tx-history-list');
+
+      if (txListEl) txListEl.innerHTML = '<p class="text-xs text-gray-400 text-center py-4">Loading transactions...</p>';
+      if (dTxListEl) dTxListEl.innerHTML = '<p class="text-xs text-gray-400 text-center py-8">Loading transactions...</p>';
 
       if (unsubscribeTx) unsubscribeTx();
 
@@ -487,53 +541,54 @@
 
     function renderTransactions() {
       const txListEl = document.getElementById('tx-history-list');
-      txListEl.innerHTML = '';
+      const dTxListEl = document.getElementById('d-tx-history-list');
 
-      if (currentTransactions.length === 0) {
-        txListEl.innerHTML = '<p class="text-xs text-gray-400 text-center py-8">No transactions recorded yet.</p>';
-        return;
-      }
+      const renderHtml = (isDesktop = false) => {
+        if (currentTransactions.length === 0) {
+          return '<p class="text-xs text-gray-400 text-center py-8">No transactions recorded yet.</p>';
+        }
+        return currentTransactions.map(t => {
+          const dateStr = new Date(t.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+          const isGiven = t.type === 'diye';
+          const photoIcon = t.receiptImage ? `<button onclick="window.viewImage('${t.receiptImage}')" class="text-[10px] bg-white border border-gray-200 px-2 py-0.5 rounded-md font-bold text-gray-700 shadow-sm ml-2">📷 Bill</button>` : '';
 
-      currentTransactions.forEach(t => {
-        const row = document.createElement('div');
-        row.className = "flex justify-between items-center p-3 rounded-xl bg-gray-50/70 border border-gray-100";
-        const dateStr = new Date(t.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
-        const isGiven = t.type === 'diye';
-
-        const photoIcon = t.receiptImage ? `<button onclick="window.viewImage('${t.receiptImage}')" class="text-[10px] bg-white border border-gray-200 px-2 py-0.5 rounded-md font-bold text-gray-700 shadow-sm ml-2">📷 Bill</button>` : '';
-
-        row.innerHTML = `
-          <div>
-            <div class="flex items-center">
-              <span class="font-bold text-gray-800 text-xs">${t.note || (isGiven ? 'Given (Debit)' : 'Received (Credit)')}</span>
-              ${photoIcon}
+          return `
+            <div class="flex justify-between items-center p-3 rounded-xl bg-gray-50/70 border border-gray-100 hover:bg-slate-50 transition">
+              <div>
+                <div class="flex items-center">
+                  <span class="font-bold text-gray-800 text-xs">${t.note || (isGiven ? 'Given (Debit)' : 'Received (Credit)')}</span>
+                  ${photoIcon}
+                </div>
+                <p class="text-[10px] text-gray-400 mt-0.5">${dateStr}</p>
+              </div>
+              <div class="text-right">
+                <span class="font-extrabold text-xs ${isGiven ? 'text-rose-600' : 'text-emerald-600'}">
+                  ${isGiven ? '-' : '+'} Rs. ${Number(t.amount).toLocaleString()}
+                </span>
+              </div>
             </div>
-            <p class="text-[10px] text-gray-400 mt-0.5">${dateStr}</p>
-          </div>
-          <div class="text-right">
-            <span class="font-extrabold text-xs ${isGiven ? 'text-rose-600' : 'text-emerald-600'}">
-              ${isGiven ? '-' : '+'} Rs. ${Number(t.amount).toLocaleString()}
-            </span>
-          </div>
-        `;
-        txListEl.appendChild(row);
-      });
+          `;
+        }).join('');
+      };
+
+      if (txListEl) txListEl.innerHTML = renderHtml(false);
+      if (dTxListEl) dTxListEl.innerHTML = renderHtml(true);
     }
 
     window.closeModal = () => {
       playSound('close');
       document.getElementById('tx-modal').classList.add('hidden');
-      if (unsubscribeTx) unsubscribeTx();
     };
 
-    window.handleFormulaInput = (event, type = 'diye') => {
+    window.handleFormulaInput = (event, type = 'diye', isDesktop = false) => {
       if (event.key === 'Enter') {
         event.preventDefault();
+        const inputId = isDesktop ? 'd-tx-amount' : 'tx-amount';
         const calculated = evaluateExpression(event.target.value);
         if (calculated > 0) {
           event.target.value = calculated;
         }
-        addTransaction(type);
+        addTransaction(type, isDesktop);
       }
     };
 
@@ -548,9 +603,9 @@
       }
     };
 
-    window.addTransaction = async (type) => {
-      const amountInput = document.getElementById('tx-amount');
-      const noteInput = document.getElementById('tx-note');
+    window.addTransaction = async (type, isDesktop = false) => {
+      const amountInput = document.getElementById(isDesktop ? 'd-tx-amount' : 'tx-amount');
+      const noteInput = document.getElementById(isDesktop ? 'd-tx-note' : 'tx-note');
       
       const evaluated = evaluateExpression(amountInput.value);
       if (!evaluated || evaluated <= 0) {
@@ -578,11 +633,11 @@
         });
 
         selectedCustomer.balance = newBal;
-        updateModalBalanceUI();
+        updateCustomerDetailUI();
         amountInput.value = '';
         noteInput.value = '';
         clearPhotoAttachment();
-        closeModal();
+        if (!isDesktop) closeModal();
       } catch (err) {
         alert("Error saving transaction: " + err.message);
       }
@@ -657,7 +712,7 @@
         return;
       }
 
-      gallaTxHistory.slice(0, 25).forEach(t => {
+      gallaTxHistory.slice(0, 30).forEach(t => {
         const row = document.createElement('tr');
         row.className = "border-b border-slate-100 hover:bg-slate-50 text-xs";
         const isCashIn = (t.gallaAction === 'in') || (t.type === 'liye');
@@ -678,6 +733,48 @@
         listEl.appendChild(row);
       });
     }
+
+    window.downloadGallaPDF = () => {
+      playSound('download');
+      const { jsPDF } = window.jspdf;
+      const pdf = new jsPDF();
+
+      pdf.setFontSize(18);
+      pdf.setTextColor(5, 150, 105);
+      pdf.text("GG Digi Book - Galla Cash Book Statement", 14, 20);
+
+      pdf.setFontSize(10);
+      pdf.setTextColor(80, 80, 80);
+      pdf.text(`User Account: ${currentUser.email || 'Admin'}`, 14, 28);
+      pdf.text(`Statement Date: ${new Date().toLocaleDateString('en-GB')}`, 14, 34);
+
+      pdf.setFontSize(11);
+      pdf.setTextColor(30, 41, 59);
+      pdf.text(`Opening Balance: Rs. ${gallaOpeningBalance.toLocaleString()}  |  Closing Cash: Rs. ${gallaClosingCash.toLocaleString()}`, 14, 42);
+
+      const tableData = gallaTxHistory.map(t => {
+        const isCashIn = (t.gallaAction === 'in') || (t.type === 'liye');
+        const dateStr = new Date(t.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+        return [
+          dateStr,
+          t.customerName || 'Account',
+          isCashIn ? 'CASH IN (+)' : 'CASH OUT (-)',
+          t.note || '-',
+          `Rs. ${Number(t.amount || 0).toLocaleString()}`
+        ];
+      });
+
+      pdf.autoTable({
+        startY: 48,
+        head: [['Date', 'Account / Party', 'Type', 'Description / Note', 'Amount']],
+        body: tableData,
+        theme: 'striped',
+        headStyles: { fillColor: [5, 150, 105] },
+        styles: { fontSize: 8.5 }
+      });
+
+      pdf.save(`GG_Galla_CashBook_${new Date().toISOString().slice(0, 10)}.pdf`);
+    };
 
     window.downloadBackup = async () => {
       playSound('tap');
@@ -854,8 +951,16 @@
           canvas.getContext('2d').drawImage(img, 0, 0, width, height);
 
           attachedPhotoBase64 = canvas.toDataURL('image/jpeg', 0.65);
-          document.getElementById('photo-preview-container').classList.remove('hidden');
-          document.getElementById('photo-preview-thumb').src = attachedPhotoBase64;
+          const p1 = document.getElementById('photo-preview-container');
+          const p2 = document.getElementById('d-photo-preview-container');
+          if (p1) {
+            p1.classList.remove('hidden');
+            document.getElementById('photo-preview-thumb').src = attachedPhotoBase64;
+          }
+          if (p2) {
+            p2.classList.remove('hidden');
+            document.getElementById('d-photo-preview-thumb').src = attachedPhotoBase64;
+          }
           playSound('success');
         };
         img.src = e.target.result;
@@ -866,8 +971,13 @@
     window.clearPhotoAttachment = () => {
       attachedPhotoBase64 = "";
       const input = document.getElementById('receipt-camera-input');
+      const dInput = document.getElementById('d-receipt-camera-input');
       if (input) input.value = "";
-      document.getElementById('photo-preview-container').classList.add('hidden');
+      if (dInput) dInput.value = "";
+      const p1 = document.getElementById('photo-preview-container');
+      const p2 = document.getElementById('d-photo-preview-container');
+      if (p1) p1.classList.add('hidden');
+      if (p2) p2.classList.add('hidden');
     };
 
     window.viewImage = (base64) => {
@@ -876,7 +986,7 @@
       w.document.write(`<img src="${base64}" style="max-width:92%; margin:30px auto; display:block; border-radius:16px; box-shadow:0 12px 30px rgba(0,0,0,0.15);">`);
     };
 
-    window.startSpeechRecognition = () => {
+    window.startSpeechRecognition = (isDesktop = false) => {
       playSound('mic');
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (!SpeechRecognition) {
@@ -885,14 +995,16 @@
       }
       const recognition = new SpeechRecognition();
       recognition.lang = 'en-US';
-      const micBtn = document.getElementById('mic-btn');
-      micBtn.classList.add('bg-rose-500', 'text-white', 'animate-pulse');
+      const micBtn = document.getElementById(isDesktop ? 'd-mic-btn' : 'mic-btn');
+      if (micBtn) micBtn.classList.add('bg-rose-500', 'text-white', 'animate-pulse');
 
       recognition.onresult = (event) => {
-        const noteInput = document.getElementById('tx-note');
+        const noteInput = document.getElementById(isDesktop ? 'd-tx-note' : 'tx-note');
         noteInput.value = (noteInput.value ? noteInput.value + ' ' : '') + event.results[0][0].transcript;
       };
-      recognition.onend = () => micBtn.classList.remove('bg-rose-500', 'text-white', 'animate-pulse');
+      recognition.onend = () => {
+        if (micBtn) micBtn.classList.remove('bg-rose-500', 'text-white', 'animate-pulse');
+      };
       recognition.start();
     };
 
@@ -901,7 +1013,14 @@
       if (!confirm(`Are you sure you want to delete ${selectedCustomer.name}'s account? All records will be removed.`)) return;
       try {
         await deleteDoc(doc(db, "customers", selectedCustomer.id));
+        selectedCustomer = null;
         closeModal();
+        const dPlaceholder = document.getElementById('desktop-no-customer-pane');
+        const dDetailPane = document.getElementById('desktop-customer-detail-pane');
+        if (dPlaceholder && dDetailPane) {
+          dPlaceholder.classList.remove('hidden');
+          dDetailPane.classList.add('hidden');
+        }
       } catch (err) {
         alert("Error: " + err.message);
       }
@@ -973,7 +1092,7 @@
     };
   </script>
 </head>
-<body class="bg-slate-50 min-h-screen text-slate-800 antialiased selection:bg-emerald-500 selection:text-white">
+<body class="bg-slate-100 min-h-screen text-slate-800 antialiased selection:bg-emerald-500 selection:text-white">
 
   <!-- 1. LOGIN SCREEN -->
   <div id="login-screen" class="flex flex-col items-center justify-center min-h-screen p-5 bg-gradient-to-b from-emerald-50/60 to-slate-100">
@@ -996,289 +1115,430 @@
     </div>
   </div>
 
-  <!-- 2. MAIN APP WRAPPER -->
-  <div id="app-screen" class="hidden max-w-md mx-auto bg-white min-h-screen shadow-2xl flex flex-col relative border-x border-slate-100">
+  <!-- 2. MAIN APP RESPONSIVE WRAPPER (Mobile Frame + PC Dashboard) -->
+  <div id="app-screen" class="hidden min-h-screen flex flex-col md:flex-row bg-slate-100">
     
-    <header class="bg-gradient-to-r from-emerald-800 to-emerald-700 text-white p-4 flex justify-between items-center shadow-lg sticky top-0 z-20">
-      <div class="flex items-center gap-3">
-        <img src="logo.png" alt="GG Logo" class="w-10 h-10 rounded-full bg-white p-0.5 object-contain shadow-md ring-2 ring-emerald-400/30">
-        <div>
-          <h1 class="text-sm font-extrabold tracking-tight leading-tight">GG Digi Book</h1>
-          <p id="user-name" class="text-[11px] text-emerald-200/90 font-medium truncate max-w-[170px]"></p>
-        </div>
-      </div>
-      <span class="text-[11px] font-bold bg-emerald-900/60 px-2.5 py-1 rounded-full border border-emerald-500/40 text-emerald-200">
-        Cloud Sync 🟢
-      </span>
-    </header>
-
-    <!-- PAGE 1: LEDGER VIEW -->
-    <div id="view-ledger" class="flex-1 flex flex-col pb-16">
-      <div class="p-4 bg-gradient-to-b from-emerald-50/60 to-transparent border-b border-slate-100 space-y-3">
-        <div class="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-sm flex items-center justify-between">
-          <div>
-            <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Net Balance</p>
-            <h2 id="net-balance" class="text-xl font-black text-slate-800 tracking-tight">Rs. 0</h2>
-          </div>
-          <div class="text-right">
-            <span id="customer-total-count" class="inline-block text-[11px] font-bold px-2.5 py-1 rounded-full bg-slate-100 text-slate-600">0 Customers</span>
-            <p id="net-status" class="text-[10px] font-bold text-emerald-600 mt-0.5">Settled</p>
-          </div>
-        </div>
-
-        <div class="grid grid-cols-2 gap-3">
-          <div class="bg-white p-3.5 rounded-2xl border border-rose-100/80 shadow-sm">
-            <div class="flex items-center justify-between mb-1">
-              <span class="text-[10px] font-bold text-slate-500 uppercase">You Will Get</span>
-              <span class="w-2 h-2 rounded-full bg-rose-500"></span>
-            </div>
-            <h3 id="total-receivable" class="text-base font-black text-rose-600 tracking-tight">Rs. 0</h3>
-          </div>
-          <div class="bg-white p-3.5 rounded-2xl border border-emerald-100/80 shadow-sm">
-            <div class="flex items-center justify-between mb-1">
-              <span class="text-[10px] font-bold text-slate-500 uppercase">You Will Give</span>
-              <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
-            </div>
-            <h3 id="total-payable" class="text-base font-black text-emerald-600 tracking-tight">Rs. 0</h3>
-          </div>
-        </div>
-      </div>
-
-      <div class="px-4 py-3 bg-white border-b border-slate-100 space-y-2.5">
-        <div class="relative">
-          <input type="text" id="search-input" oninput="renderCustomers()" placeholder="Search customer by name or phone..." class="w-full bg-slate-50 pl-9 pr-4 py-2.5 text-xs rounded-xl border border-slate-200/80 outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition">
-          <span class="absolute left-3 top-3 text-slate-400 text-xs">🔍</span>
-        </div>
-        <div class="flex gap-2">
-          <button id="filter-all" onclick="setFilter('all')" class="px-4 py-1.5 rounded-full text-xs font-bold bg-emerald-700 text-white shadow-sm transition">All</button>
-          <button id="filter-receivable" onclick="setFilter('receivable')" class="px-4 py-1.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200 transition">You Will Get</button>
-          <button id="filter-payable" onclick="setFilter('payable')" class="px-4 py-1.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200 transition">You Will Give</button>
-        </div>
-      </div>
-
-      <div id="customer-list" class="flex-1 overflow-y-auto divide-y divide-slate-100"></div>
-
-      <div class="p-3 bg-white/95 border-t border-slate-100 sticky bottom-14 z-10 backdrop-blur-md">
-        <button onclick="addNewCustomer()" class="w-full py-3 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white font-bold rounded-2xl shadow-lg shadow-emerald-600/20 flex items-center justify-center gap-2 transition text-sm">
-          <span class="text-lg leading-none font-black">+</span> Add New Customer
-        </button>
-      </div>
-    </div>
-
-    <!-- PAGE 2: ACCOUNTS / GALLA WITH PERSISTENT ROLLING BALANCE -->
-    <div id="view-accounts" class="hidden flex-1 p-4 pb-20 space-y-4 overflow-y-auto bg-slate-50/70">
-      
-      <!-- TOP STRIP: OPENING, CASH IN, CASH OUT, CLOSING CASH -->
-      <div class="bg-white p-3.5 rounded-3xl border border-slate-200/90 shadow-sm space-y-2.5">
-        <div class="flex items-center justify-between">
-          <span class="text-[10px] font-black text-slate-400 uppercase tracking-wider">Live Galla Cash Flow</span>
-          <span class="text-[9px] font-bold bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">Continuous Rolling</span>
-        </div>
-
-        <div class="grid grid-cols-4 gap-1.5 text-center">
-          <div class="bg-slate-50 p-2 rounded-2xl border border-slate-100 flex flex-col justify-between">
-            <div class="flex items-center justify-center gap-1">
-              <span class="text-[9px] font-bold text-slate-500 uppercase">Opening</span>
-              <button onclick="editOpeningBalance()" title="Set/Edit Opening Balance" class="text-[10px] text-emerald-700 hover:text-emerald-900 transition">✏️</button>
-            </div>
-            <h5 id="galla-strip-opening" class="text-xs font-black text-slate-800 mt-1">Rs. 0</h5>
-          </div>
-
-          <div class="bg-emerald-50/60 p-2 rounded-2xl border border-emerald-100 flex flex-col justify-between">
-            <span class="text-[9px] font-bold text-emerald-700 uppercase">Cash In (+)</span>
-            <h5 id="galla-strip-in" class="text-xs font-black text-emerald-600 mt-1">Rs. 0</h5>
-          </div>
-
-          <div class="bg-rose-50/60 p-2 rounded-2xl border border-rose-100 flex flex-col justify-between">
-            <span class="text-[9px] font-bold text-rose-700 uppercase">Cash Out (-)</span>
-            <h5 id="galla-strip-out" class="text-xs font-black text-rose-600 mt-1">Rs. 0</h5>
-          </div>
-
-          <div class="bg-slate-900 text-white p-2 rounded-2xl shadow-sm flex flex-col justify-between">
-            <span class="text-[9px] font-bold text-emerald-400 uppercase">Closing</span>
-            <h5 id="galla-strip-closing" class="text-xs font-black text-white mt-1">Rs. 0</h5>
-          </div>
-        </div>
-      </div>
-
-      <!-- Galla Entry Box with Calculator & Enter Support -->
-      <div class="bg-white p-4 rounded-3xl border border-slate-200/80 shadow-sm space-y-3">
-        <div class="flex items-center justify-between">
-          <h4 class="text-xs font-extrabold text-slate-800 uppercase tracking-wider">Galla Entry (Account Link & Calculator)</h4>
-          <span class="text-[10px] font-bold bg-emerald-50 text-emerald-700 px-2.5 py-0.5 rounded-full">Active</span>
-        </div>
-        <p class="text-[11px] text-slate-400">Account select karein aur formula likh kar Enter karein (jaise <code>500+6000</code>):</p>
-
-        <div>
-          <label class="text-[10px] font-bold text-slate-500 block mb-1">Select Account / Party:</label>
-          <select id="galla-party-select" class="w-full text-xs font-bold p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:border-emerald-500 outline-none"></select>
-        </div>
-
-        <div class="grid grid-cols-2 gap-2">
-          <div>
-            <input type="text" id="galla-entry-amount" onkeydown="handleGallaFormulaInput(event, 'in')" placeholder="Amount or 500+6000" class="w-full text-xs font-bold p-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-emerald-500">
-            <span class="text-[9px] text-slate-400 mt-0.5 block font-medium">Supports +, -, *, /</span>
-          </div>
-          <input type="text" id="galla-entry-note" onkeydown="if(event.key==='Enter') processGallaAccountEntry('in')" placeholder="Description/Note" class="w-full text-xs p-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-emerald-500">
-        </div>
-
-        <div class="grid grid-cols-2 gap-2 pt-1">
-          <button onclick="processGallaAccountEntry('in')" class="py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-black rounded-xl shadow-md transition flex flex-col items-center">
-            <span>+ CASH IN (Aaya)</span>
-            <span class="text-[9px] font-normal text-emerald-100">Galla +, Account Minus</span>
-          </button>
-          <button onclick="processGallaAccountEntry('out')" class="py-2.5 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white text-xs font-black rounded-xl shadow-md transition flex flex-col items-center">
-            <span>- CASH OUT (Gaya)</span>
-            <span class="text-[9px] font-normal text-rose-100">Galla -, Account Plus</span>
-          </button>
-        </div>
-      </div>
-
-      <!-- Persistent Cash Book Activity History -->
-      <div class="bg-white p-4 rounded-3xl border border-slate-200/80 shadow-sm space-y-2">
-        <h4 class="text-xs font-extrabold text-slate-800 uppercase tracking-wider">Cash Book Activity (History)</h4>
-        <div class="overflow-x-auto">
-          <table class="w-full text-left border-collapse">
-            <thead>
-              <tr class="border-b border-slate-200 text-[10px] font-extrabold text-slate-400 uppercase">
-                <th class="p-2">Date</th>
-                <th class="p-2">Account</th>
-                <th class="p-2">Type</th>
-                <th class="p-2 text-right">Amount</th>
-              </tr>
-            </thead>
-            <tbody id="galla-history-tbody"></tbody>
-          </table>
-        </div>
-      </div>
-
-    </div>
-
-    <!-- PAGE 3: SETTINGS & MORE VIEW -->
-    <div id="view-settings" class="hidden flex-1 p-4 pb-20 space-y-4 overflow-y-auto bg-slate-50/60">
-      
-      <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
+    <!-- DESKTOP LEFT SIDEBAR (>= 768px screens) -->
+    <aside class="hidden md:flex flex-col w-64 lg:w-72 bg-white border-r border-slate-200 h-screen sticky top-0 z-30 p-5 justify-between shadow-sm">
+      <div class="space-y-6">
+        <!-- Logo Brand -->
         <div class="flex items-center gap-3">
-          <div class="w-12 h-12 rounded-full bg-emerald-100 text-emerald-800 flex items-center justify-center font-extrabold text-base shadow-inner">
+          <img src="logo.png" alt="GG Logo" class="w-11 h-11 rounded-full bg-white p-0.5 object-contain shadow-md ring-2 ring-emerald-500/20">
+          <div>
+            <h2 class="text-base font-extrabold text-slate-900 tracking-tight leading-tight">GG Digi Book</h2>
+            <span class="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full inline-block mt-0.5">Cloud Sync 🟢</span>
+          </div>
+        </div>
+
+        <!-- User Profile Card -->
+        <div class="p-3 bg-slate-50 rounded-2xl border border-slate-100 flex items-center gap-3">
+          <div class="w-9 h-9 rounded-full bg-emerald-600 text-white flex items-center justify-center font-black text-xs shadow-inner">
             👤
           </div>
-          <div>
-            <h3 id="settings-user-name" class="font-extrabold text-slate-900 text-sm"></h3>
-            <p id="settings-user-email" class="text-xs text-slate-400 font-medium"></p>
+          <div class="overflow-hidden">
+            <h4 id="desktop-user-name" class="text-xs font-bold text-slate-900 truncate"></h4>
+            <p id="desktop-user-email" class="text-[11px] text-slate-400 truncate"></p>
           </div>
         </div>
-        <button onclick="logout()" class="text-xs font-bold text-rose-600 hover:bg-rose-50 px-3 py-1.5 rounded-xl border border-rose-200 transition active:scale-95">
-          Logout
-        </button>
-      </div>
 
-      <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3">
-        <h4 class="text-xs font-extrabold text-slate-400 uppercase tracking-wider">Backup & Account Transfer</h4>
-        
-        <div class="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-100">
-          <div>
-            <h5 class="text-xs font-bold text-slate-800">Export Backup</h5>
-            <p class="text-[11px] text-slate-400">Download Excel (.CSV) or JSON</p>
-          </div>
-          <button onclick="downloadBackup()" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-sm transition active:scale-95 flex items-center gap-1.5">
-            📥 Download
+        <!-- Navigation Menu -->
+        <nav class="space-y-1.5">
+          <button id="d-tab-btn-ledger" onclick="switchTab('ledger')" class="w-full flex items-center gap-3 px-4 py-3 rounded-2xl bg-emerald-50 text-emerald-800 font-extrabold text-sm shadow-sm transition">
+            <span class="text-lg">📖</span> Khata / Customers
           </button>
-        </div>
-
-        <div class="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-100">
-          <div>
-            <h5 class="text-xs font-bold text-slate-800">Import / Restore Ledger</h5>
-            <p class="text-[11px] text-slate-400">Shift data from another Gmail</p>
-          </div>
-          <div>
-            <button onclick="triggerImportBackup()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-bold shadow-sm transition active:scale-95 flex items-center gap-1.5">
-              📤 Import JSON
-            </button>
-            <input type="file" id="import-json-input" accept=".json" onchange="handleImportBackupFile(event)" class="hidden">
-          </div>
-        </div>
+          <button id="d-tab-btn-accounts" onclick="switchTab('accounts')" class="w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-slate-600 font-bold text-sm hover:bg-slate-100 transition">
+            <span class="text-lg">💰</span> Accounts / Galla
+          </button>
+          <button id="d-tab-btn-settings" onclick="switchTab('settings')" class="w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-slate-600 font-bold text-sm hover:bg-slate-100 transition">
+            <span class="text-lg">⚙️</span> Settings & Backup
+          </button>
+        </nav>
       </div>
 
-      <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-3.5">
-        <h4 class="text-xs font-extrabold text-slate-400 uppercase tracking-wider">Contact Us</h4>
+      <!-- Sidebar Bottom Logout -->
+      <div>
+        <button onclick="logout()" class="w-full py-2.5 px-4 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold rounded-2xl text-xs transition flex items-center justify-center gap-2">
+          <span>🚪</span> Sign Out
+        </button>
+        <p class="text-[10px] text-slate-400 text-center font-medium mt-3">GG Digi Book • Global Guru</p>
+      </div>
+    </aside>
+
+    <!-- MAIN CONTENT AREA (Mobile Central Frame + PC Stretched Content) -->
+    <div class="flex-1 flex flex-col min-h-screen max-w-md md:max-w-none mx-auto md:mx-0 w-full bg-white md:bg-slate-50 border-x md:border-x-0 border-slate-200">
+      
+      <!-- Mobile Top Header (Hidden on PC) -->
+      <header class="md:hidden bg-gradient-to-r from-emerald-800 to-emerald-700 text-white p-4 flex justify-between items-center shadow-lg sticky top-0 z-20">
+        <div class="flex items-center gap-3">
+          <img src="logo.png" alt="GG Logo" class="w-10 h-10 rounded-full bg-white p-0.5 object-contain shadow-md ring-2 ring-emerald-400/30">
+          <div>
+            <h1 class="text-sm font-extrabold tracking-tight leading-tight">GG Digi Book</h1>
+            <p id="user-name" class="text-[11px] text-emerald-200/90 font-medium truncate max-w-[170px]"></p>
+          </div>
+        </div>
+        <span class="text-[11px] font-bold bg-emerald-900/60 px-2.5 py-1 rounded-full border border-emerald-500/40 text-emerald-200">
+          Cloud Sync 🟢
+        </span>
+      </header>
+
+      <!-- PAGE 1: LEDGER VIEW (Mobile Single Column / PC 2-Column Split Screen) -->
+      <div id="view-ledger" class="flex-1 flex flex-col md:flex-row pb-16 md:pb-0 h-full">
         
-        <a href="https://wa.me/923027374880?text=Hello%20GG%20Digi%20Book%20Support" target="_blank" class="w-full flex items-center justify-between p-3.5 rounded-2xl bg-emerald-500 hover:bg-emerald-600 text-white transition active:scale-[0.98] shadow-md shadow-emerald-500/20">
-          <div class="flex items-center gap-3">
-            <div class="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center text-lg">
-              💬
+        <!-- Left Customer List Column (Full width on Mobile / 400px on Desktop) -->
+        <div class="w-full md:w-[380px] lg:w-[420px] md:border-r border-slate-200 flex flex-col bg-white">
+          
+          <!-- Net Balance & Summary Cards -->
+          <div class="p-4 bg-gradient-to-b from-emerald-50/60 to-transparent border-b border-slate-100 space-y-3">
+            <div class="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-sm flex items-center justify-between">
+              <div>
+                <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Net Balance</p>
+                <h2 id="net-balance" class="text-xl font-black text-slate-800 tracking-tight">Rs. 0</h2>
+              </div>
+              <div class="text-right">
+                <span id="customer-total-count" class="inline-block text-[11px] font-bold px-2.5 py-1 rounded-full bg-slate-100 text-slate-600">0 Customers</span>
+                <p id="net-status" class="text-[10px] font-bold text-emerald-600 mt-0.5">Settled</p>
+              </div>
             </div>
-            <div>
-              <p class="text-xs font-black tracking-wide">WhatsApp Support</p>
-              <p class="text-[11px] text-emerald-100 font-medium">0302-7374880</p>
+
+            <div class="grid grid-cols-2 gap-3">
+              <div class="bg-white p-3.5 rounded-2xl border border-rose-100/80 shadow-sm">
+                <div class="flex items-center justify-between mb-1">
+                  <span class="text-[10px] font-bold text-slate-500 uppercase">You Will Get</span>
+                  <span class="w-2 h-2 rounded-full bg-rose-500"></span>
+                </div>
+                <h3 id="total-receivable" class="text-base font-black text-rose-600 tracking-tight">Rs. 0</h3>
+              </div>
+              <div class="bg-white p-3.5 rounded-2xl border border-emerald-100/80 shadow-sm">
+                <div class="flex items-center justify-between mb-1">
+                  <span class="text-[10px] font-bold text-slate-500 uppercase">You Will Give</span>
+                  <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+                </div>
+                <h3 id="total-payable" class="text-base font-black text-emerald-600 tracking-tight">Rs. 0</h3>
+              </div>
             </div>
           </div>
-          <span class="text-[11px] font-black bg-white text-emerald-800 px-3 py-1.5 rounded-xl shadow-sm">
-            Chat Now →
-          </span>
-        </a>
 
-        <div>
-          <p class="text-[11px] font-bold text-slate-500 mb-2.5">Connect Across Platforms</p>
-          <div class="grid grid-cols-5 gap-2">
-            
-            <a href="https://www.youtube.com/@globalguruofficial1" target="_blank" title="YouTube" class="flex flex-col items-center justify-center p-2.5 rounded-2xl bg-white border border-slate-200/80 hover:border-red-500 hover:shadow-md transition active:scale-95 shadow-sm">
-              <svg class="w-6 h-6 text-[#FF0000]" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
-              </svg>
-              <span class="text-[9px] font-bold text-slate-700 mt-1.5">YouTube</span>
-            </a>
+          <!-- Search & Filters -->
+          <div class="px-4 py-3 bg-white border-b border-slate-100 space-y-2.5">
+            <div class="relative">
+              <input type="text" id="search-input" oninput="renderCustomers()" placeholder="Search customer by name or phone..." class="w-full bg-slate-50 pl-9 pr-4 py-2.5 text-xs rounded-xl border border-slate-200/80 outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition">
+              <span class="absolute left-3 top-3 text-slate-400 text-xs">🔍</span>
+            </div>
+            <div class="flex gap-2">
+              <button id="filter-all" onclick="setFilter('all')" class="px-4 py-1.5 rounded-full text-xs font-bold bg-emerald-700 text-white shadow-sm transition">All</button>
+              <button id="filter-receivable" onclick="setFilter('receivable')" class="px-4 py-1.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200 transition">You Will Get</button>
+              <button id="filter-payable" onclick="setFilter('payable')" class="px-4 py-1.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200 transition">You Will Give</button>
+            </div>
+          </div>
 
-            <a href="https://web.facebook.com/globalguruofficial1" target="_blank" title="Facebook" class="flex flex-col items-center justify-center p-2.5 rounded-2xl bg-white border border-slate-200/80 hover:border-blue-600 hover:shadow-md transition active:scale-95 shadow-sm">
-              <svg class="w-6 h-6 text-[#1877F2]" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
-              </svg>
-              <span class="text-[9px] font-bold text-slate-700 mt-1.5">Facebook</span>
-            </a>
+          <!-- Customer List Scrollable -->
+          <div id="customer-list" class="flex-1 overflow-y-auto divide-y divide-slate-100 max-h-[calc(100vh-360px)] md:max-h-none"></div>
 
-            <a href="https://instagram.com/globalguruofficial1" target="_blank" title="Instagram" class="flex flex-col items-center justify-center p-2.5 rounded-2xl bg-white border border-slate-200/80 hover:border-pink-500 hover:shadow-md transition active:scale-95 shadow-sm">
-              <svg class="w-6 h-6 text-[#E4405F]" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/>
-              </svg>
-              <span class="text-[9px] font-bold text-slate-700 mt-1.5">Instagram</span>
-            </a>
-
-            <a href="https://www.tiktok.com/@globalguruofficial" target="_blank" title="TikTok" class="flex flex-col items-center justify-center p-2.5 rounded-2xl bg-white border border-slate-200/80 hover:border-black hover:shadow-md transition active:scale-95 shadow-sm">
-              <svg class="w-6 h-6 text-black" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M12.525.02c1.31-.02 2.61-.01 3.91-.02.08 1.53.63 3.09 1.75 4.17 1.12 1.11 2.7 1.62 4.24 1.79v4.03c-1.44-.05-2.89-.35-4.2-.97-.57-.26-1.1-.59-1.62-.99v9.09c-.03 2.01-.84 4.02-2.34 5.37-1.63 1.49-3.92 2.16-6.09 1.81-2.2-.33-4.22-1.67-5.35-3.58-1.16-1.92-1.34-4.37-.5-6.38.86-2.02 2.72-3.53 4.88-3.99.78-.17 1.58-.2 2.37-.12v4.22c-.61-.08-1.25-.01-1.83.21-.82.3-1.49.95-1.83 1.76-.36.85-.31 1.84.14 2.64.44.8 1.25 1.36 2.15 1.49.99.16 2.04-.15 2.77-.85.66-.63 1.05-1.53 1.05-2.45V.02h.65z"/>
-              </svg>
-              <span class="text-[9px] font-bold text-slate-700 mt-1.5">TikTok</span>
-            </a>
-
-            <a href="https://www.threads.net/@globalguruofficial1" target="_blank" title="Threads" class="flex flex-col items-center justify-center p-2.5 rounded-2xl bg-white border border-slate-200/80 hover:border-black hover:shadow-md transition active:scale-95 shadow-sm">
-              <svg class="w-6 h-6 text-black" viewBox="0 0 192 192" fill="currentColor">
-                <path d="M141.537 88.9883C140.71 88.5919 139.87 88.2109 139.019 87.8456C137.537 60.5382 122.616 44.905 97.5619 44.745C97.4484 44.7443 97.3355 44.7443 97.222 44.7443C82.2364 44.7443 69.7731 51.1409 62.102 62.7807L75.5727 72.8138C81.0827 64.4538 89.2612 60.7788 97.2341 60.7788C110.748 60.7788 119.537 69.6013 120.487 84.1506C113.626 83.1756 106.376 82.8093 98.7188 83.0569C72.0625 83.9169 55.4544 98.2431 56.0969 119.349C56.7088 139.467 73.0688 152.012 94.0625 152.012C108.799 152.012 119.981 145.474 126.791 133.029C132.846 144.159 143.141 150.144 157.069 150.144C174.197 150.144 186.281 138.834 186.281 118.892C186.281 83.2181 158.469 64.9125 120.891 64.9125C78.435 64.9125 47.9625 87.9712 47.9625 125.683C47.9625 152.128 66.525 170.835 96.0938 170.835C112.575 170.835 126.338 165.176 135.038 154.512L147.244 165.816C134.906 180.705 116.794 187.688 96.0938 187.688C56.2875 187.688 30.7125 162.248 30.7125 125.683C30.7125 76.5412 69.4125 48.0675 120.891 48.0675C170.775 48.0675 203.531 73.7437 203.531 118.892C203.531 148.164 184.95 166.995 157.069 166.995C139.631 166.995 127.144 158.625 121.284 144.188C114.712 153.281 104.981 157.942 93.6844 157.942C77.475 157.942 65.5125 147.536 64.9969 131.627C64.4469 114.675 77.2969 103.568 98.2406 102.898C105.797 102.656 113.128 103.181 120.084 104.426C118.912 95.8425 112.444 89.9625 101.466 89.9625C95.4281 89.9625 89.8781 92.205 85.9406 96.225L75.6094 84.8812C81.8531 78.4725 90.75 74.8725 101.466 74.8725C119.869 74.8725 133.725 84.7725 136.003 103.886C137.944 104.839 139.791 105.889 141.537 107.031V88.9883ZM120.084 117.892C113.888 116.897 107.381 116.488 100.678 116.702C88.2469 117.098 79.9594 122.951 80.2875 131.957C80.6062 140.719 88.7531 146.104 99.4594 146.104C108.975 146.104 116.634 140.404 120.084 130.414V117.892Z"/>
-              </svg>
-              <span class="text-[9px] font-bold text-slate-700 mt-1.5">Threads</span>
-            </a>
-
+          <!-- Add Customer Bar -->
+          <div class="p-3 bg-white/95 border-t border-slate-100 sticky bottom-14 md:bottom-0 z-10 backdrop-blur-md">
+            <button onclick="addNewCustomer()" class="w-full py-3 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white font-bold rounded-2xl shadow-lg shadow-emerald-600/20 flex items-center justify-center gap-2 transition text-sm">
+              <span class="text-lg leading-none font-black">+</span> Add New Customer
+            </button>
           </div>
         </div>
 
-        <a href="https://linktr.ee/Globalguruofficial1" target="_blank" class="flex items-center justify-between p-3 rounded-xl bg-slate-50 hover:bg-emerald-50 border border-slate-100 transition">
-          <div class="flex items-center gap-2.5">
-            <span class="text-base">🌲</span>
-            <div>
-              <p class="text-xs font-bold text-slate-800">All Official Links (Linktree)</p>
-              <p class="text-[10px] text-slate-400">linktr.ee/Globalguruofficial1</p>
+        <!-- Right Side Desktop Pane (Hidden on Mobile, Visible on PC) -->
+        <div class="hidden md:flex flex-1 flex-col bg-slate-50 h-screen overflow-y-auto p-6">
+          
+          <!-- State 1: When No Customer Selected -->
+          <div id="desktop-no-customer-pane" class="flex-1 flex flex-col items-center justify-center text-center p-8 text-slate-400">
+            <div class="w-20 h-20 bg-white rounded-3xl shadow-sm border border-slate-200/80 flex items-center justify-center text-3xl mb-4">
+              📖
+            </div>
+            <h3 class="text-base font-extrabold text-slate-700">No Customer Selected</h3>
+            <p class="text-xs text-slate-400 mt-1 max-w-xs">Left side list se kisi bhi customer ya account par click karein taake detailed ledger aur entry panel open ho sake.</p>
+          </div>
+
+          <!-- State 2: Customer Detail & Transactions Ledger (Desktop) -->
+          <div id="desktop-customer-detail-pane" class="hidden flex-1 flex flex-col space-y-4">
+            
+            <!-- Top Customer Header Card -->
+            <div class="bg-white p-5 rounded-3xl border border-slate-200/80 shadow-sm flex items-center justify-between">
+              <div>
+                <h3 id="d-cust-name" class="text-xl font-black text-slate-900 leading-tight"></h3>
+                <p id="d-cust-phone" class="text-xs text-slate-400 mt-0.5 font-medium"></p>
+                <div id="d-cust-balance" class="mt-2"></div>
+              </div>
+              <div class="flex items-center gap-2">
+                <button onclick="sendWhatsApp()" class="px-3.5 py-2 bg-emerald-50 text-emerald-800 border border-emerald-200 font-bold rounded-xl flex items-center gap-1.5 text-xs hover:bg-emerald-100 transition shadow-sm">
+                  <span>💬</span> WhatsApp
+                </button>
+                <button onclick="downloadPDF()" class="px-3.5 py-2 bg-white text-slate-700 border border-slate-200 font-bold rounded-xl flex items-center gap-1.5 text-xs hover:bg-slate-100 transition shadow-sm">
+                  <span>📄</span> PDF
+                </button>
+                <button onclick="deleteCustomer()" title="Delete Customer" class="p-2 text-rose-500 hover:bg-rose-50 rounded-xl transition border border-rose-100">
+                  🗑️
+                </button>
+              </div>
+            </div>
+
+            <!-- In-Page Transaction Entry Panel (No Popups on Desktop) -->
+            <div class="bg-white p-5 rounded-3xl border border-slate-200/80 shadow-sm space-y-3">
+              <h4 class="text-xs font-extrabold text-slate-400 uppercase tracking-wider">Quick Transaction Entry</h4>
+              
+              <!-- Photo Preview (Desktop) -->
+              <div id="d-photo-preview-container" class="hidden flex items-center justify-between bg-slate-50 border border-emerald-200 p-2.5 rounded-xl">
+                <div class="flex items-center gap-2">
+                  <img id="d-photo-preview-thumb" class="w-8 h-8 rounded-lg object-cover border border-emerald-300" src="">
+                  <span class="text-xs font-bold text-emerald-800">Bill Photo Attached ✅</span>
+                </div>
+                <button onclick="clearPhotoAttachment()" class="text-xs text-rose-600 font-bold hover:bg-rose-50 px-2 py-1 rounded">Remove</button>
+              </div>
+
+              <div class="grid grid-cols-12 gap-3">
+                <div class="col-span-5">
+                  <input type="text" id="d-tx-amount" onkeydown="handleFormulaInput(event, 'diye', true)" placeholder="Amount (e.g. 500+6000)" class="w-full text-xs font-bold p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none">
+                  <span class="text-[9px] text-slate-400 mt-0.5 block font-medium">Type formula & Press Enter</span>
+                </div>
+                
+                <div class="col-span-7 relative flex items-center">
+                  <input type="text" id="d-tx-note" onkeydown="if(event.key==='Enter') addTransaction('diye', true)" placeholder="Note / Description" class="w-full text-xs p-3 pr-16 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none">
+                  <div class="absolute right-2 flex items-center gap-1.5">
+                    <button id="d-mic-btn" onclick="startSpeechRecognition(true)" title="Voice to Text" class="p-1.5 rounded-lg text-slate-400 hover:text-emerald-700 text-sm transition">🎙️</button>
+                    <label for="d-receipt-camera-input" title="Attach Receipt/Bill" class="p-1.5 rounded-lg text-slate-400 hover:text-emerald-700 text-sm cursor-pointer transition">📸</label>
+                    <input id="d-receipt-camera-input" type="file" accept="image/*" onchange="handleReceiptUpload(event)" class="hidden">
+                  </div>
+                </div>
+              </div>
+
+              <div class="grid grid-cols-2 gap-3 pt-1">
+                <button onclick="addTransaction('diye', true)" class="py-3 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white text-xs font-bold rounded-xl shadow-md transition flex items-center justify-center gap-1.5">
+                  <span>🔴</span> CASH OUT (You Gave)
+                </button>
+                <button onclick="addTransaction('liye', true)" class="py-3 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-bold rounded-xl shadow-md transition flex items-center justify-center gap-1.5">
+                  <span>🟢</span> CASH IN (You Got)
+                </button>
+              </div>
+            </div>
+
+            <!-- Scrollable Customer Ledger History -->
+            <div class="bg-white p-5 rounded-3xl border border-slate-200/80 shadow-sm flex-1 flex flex-col space-y-3">
+              <h4 class="text-xs font-extrabold text-slate-400 uppercase tracking-wider">Transaction History</h4>
+              <div id="d-tx-history-list" class="space-y-2 flex-1 overflow-y-auto max-h-[350px]"></div>
+            </div>
+
+          </div>
+
+        </div>
+
+      </div>
+
+      <!-- PAGE 2: ACCOUNTS / GALLA VIEW (Wide PC Layout) -->
+      <div id="view-accounts" class="hidden flex-1 p-4 md:p-6 pb-20 md:pb-6 space-y-4 overflow-y-auto bg-slate-50">
+        
+        <!-- TOP STRIP: OPENING, CASH IN, CASH OUT, CLOSING CASH -->
+        <div class="bg-white p-4 md:p-5 rounded-3xl border border-slate-200/90 shadow-sm space-y-3 max-w-5xl mx-auto">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-black text-slate-400 uppercase tracking-wider">Live Galla Cash Flow</span>
+            <span class="text-[10px] font-bold bg-slate-100 text-slate-500 px-2.5 py-0.5 rounded-full">Continuous Rolling (No Reset)</span>
+          </div>
+
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-3 text-center">
+            <div class="bg-slate-50 p-3 rounded-2xl border border-slate-100 flex flex-col justify-between">
+              <div class="flex items-center justify-center gap-1.5">
+                <span class="text-[10px] font-bold text-slate-500 uppercase">Opening Balance</span>
+                <button onclick="editOpeningBalance()" title="Set/Edit Opening Balance" class="text-xs text-emerald-700 hover:text-emerald-900 transition">✏️</button>
+              </div>
+              <h5 id="galla-strip-opening" class="text-sm md:text-base font-black text-slate-800 mt-1.5">Rs. 0</h5>
+            </div>
+
+            <div class="bg-emerald-50/60 p-3 rounded-2xl border border-emerald-100 flex flex-col justify-between">
+              <span class="text-[10px] font-bold text-emerald-700 uppercase">Total Cash In (+)</span>
+              <h5 id="galla-strip-in" class="text-sm md:text-base font-black text-emerald-600 mt-1.5">Rs. 0</h5>
+            </div>
+
+            <div class="bg-rose-50/60 p-3 rounded-2xl border border-rose-100 flex flex-col justify-between">
+              <span class="text-[10px] font-bold text-rose-700 uppercase">Total Cash Out (-)</span>
+              <h5 id="galla-strip-out" class="text-sm md:text-base font-black text-rose-600 mt-1.5">Rs. 0</h5>
+            </div>
+
+            <div class="bg-slate-900 text-white p-3 rounded-2xl shadow-sm flex flex-col justify-between">
+              <span class="text-[10px] font-bold text-emerald-400 uppercase">Closing Cash</span>
+              <h5 id="galla-strip-closing" class="text-sm md:text-base font-black text-white mt-1.5">Rs. 0</h5>
             </div>
           </div>
-          <span class="text-xs font-bold text-emerald-700">Open →</span>
-        </a>
+        </div>
+
+        <!-- 2-COLUMN GALLA ENTRY & HISTORY ON PC -->
+        <div class="grid grid-cols-1 md:grid-cols-12 gap-4 max-w-5xl mx-auto">
+          
+          <!-- Galla Entry Box -->
+          <div class="md:col-span-5 bg-white p-5 rounded-3xl border border-slate-200/80 shadow-sm space-y-3.5">
+            <div class="flex items-center justify-between">
+              <h4 class="text-xs font-extrabold text-slate-800 uppercase tracking-wider">Galla Entry (Account Link)</h4>
+              <span class="text-[10px] font-bold bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-md">Live Sync</span>
+            </div>
+            <p class="text-[11px] text-slate-400">Account select karein aur amount box mein formula daal kar Enter karein:</p>
+
+            <div>
+              <label class="text-[10px] font-bold text-slate-500 block mb-1">Select Account / Party:</label>
+              <select id="galla-party-select" class="w-full text-xs font-bold p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:border-emerald-500 outline-none"></select>
+            </div>
+
+            <div class="space-y-2">
+              <div>
+                <input type="text" id="galla-entry-amount" onkeydown="handleGallaFormulaInput(event, 'in')" placeholder="Amount or 500+6000" class="w-full text-xs font-bold p-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-emerald-500">
+                <span class="text-[9px] text-slate-400 mt-0.5 block font-medium">Supports +, -, *, / & Enter</span>
+              </div>
+              <input type="text" id="galla-entry-note" onkeydown="if(event.key==='Enter') processGallaAccountEntry('in')" placeholder="Description/Note" class="w-full text-xs p-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-emerald-500">
+            </div>
+
+            <div class="grid grid-cols-2 gap-2 pt-1">
+              <button onclick="processGallaAccountEntry('in')" class="py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-black rounded-xl shadow-md transition flex flex-col items-center">
+                <span>+ CASH IN (Aaya)</span>
+                <span class="text-[9px] font-normal text-emerald-100">Galla +, Account Minus</span>
+              </button>
+              <button onclick="processGallaAccountEntry('out')" class="py-2.5 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white text-xs font-black rounded-xl shadow-md transition flex flex-col items-center">
+                <span>- CASH OUT (Gaya)</span>
+                <span class="text-[9px] font-normal text-rose-100">Galla -, Account Plus</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- History Table on Right Side -->
+          <div class="md:col-span-7 bg-white p-5 rounded-3xl border border-slate-200/80 shadow-sm space-y-3">
+            <div class="flex items-center justify-between">
+              <h4 class="text-xs font-extrabold text-slate-800 uppercase tracking-wider">Cash Book Activity (History)</h4>
+              <button onclick="downloadGallaPDF()" class="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 rounded-xl text-xs font-bold border border-emerald-200 transition active:scale-95 flex items-center gap-1 shadow-sm">
+                <span>📄</span> Download PDF
+              </button>
+            </div>
+            <div class="overflow-x-auto max-h-[380px]">
+              <table class="w-full text-left border-collapse">
+                <thead>
+                  <tr class="border-b border-slate-200 text-[10px] font-extrabold text-slate-400 uppercase">
+                    <th class="p-2.5">Date</th>
+                    <th class="p-2.5">Account</th>
+                    <th class="p-2.5">Type</th>
+                    <th class="p-2.5 text-right">Amount</th>
+                  </tr>
+                </thead>
+                <tbody id="galla-history-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+
+        </div>
 
       </div>
 
-      <div class="text-center py-2 text-slate-400 text-[11px] font-medium">
-        GG Digi Book • Powered by Global Guru
+      <!-- PAGE 3: SETTINGS & MORE VIEW -->
+      <div id="view-settings" class="hidden flex-1 p-4 md:p-6 pb-20 md:pb-6 space-y-4 overflow-y-auto bg-slate-50">
+        
+        <div class="max-w-2xl mx-auto space-y-4">
+          <!-- Profile Card -->
+          <div class="bg-white p-4 md:p-5 rounded-3xl border border-slate-200 shadow-sm flex items-center justify-between">
+            <div class="flex items-center gap-3">
+              <div class="w-12 h-12 rounded-full bg-emerald-100 text-emerald-800 flex items-center justify-center font-extrabold text-base shadow-inner">
+                👤
+              </div>
+              <div>
+                <h3 id="settings-user-name" class="font-extrabold text-slate-900 text-sm"></h3>
+                <p id="settings-user-email" class="text-xs text-slate-400 font-medium"></p>
+              </div>
+            </div>
+            <button onclick="logout()" class="text-xs font-bold text-rose-600 hover:bg-rose-50 px-3.5 py-2 rounded-xl border border-rose-200 transition active:scale-95">
+              Logout
+            </button>
+          </div>
+
+          <!-- Backup & Migration -->
+          <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm space-y-3">
+            <h4 class="text-xs font-extrabold text-slate-400 uppercase tracking-wider">Backup & Account Transfer</h4>
+            
+            <div class="flex items-center justify-between p-3.5 rounded-2xl bg-slate-50 border border-slate-100">
+              <div>
+                <h5 class="text-xs font-bold text-slate-800">Export Backup</h5>
+                <p class="text-[11px] text-slate-400">Download Excel (.CSV) or JSON</p>
+              </div>
+              <button onclick="downloadBackup()" class="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-sm transition active:scale-95 flex items-center gap-1.5">
+                📥 Download
+              </button>
+            </div>
+
+            <div class="flex items-center justify-between p-3.5 rounded-2xl bg-slate-50 border border-slate-100">
+              <div>
+                <h5 class="text-xs font-bold text-slate-800">Import / Restore Ledger</h5>
+                <p class="text-[11px] text-slate-400">Shift data from another Gmail</p>
+              </div>
+              <div>
+                <button onclick="triggerImportBackup()" class="px-3.5 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-bold shadow-sm transition active:scale-95 flex items-center gap-1.5">
+                  📤 Import JSON
+                </button>
+                <input type="file" id="import-json-input" accept=".json" onchange="handleImportBackupFile(event)" class="hidden">
+              </div>
+            </div>
+          </div>
+
+          <!-- Contact Card -->
+          <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm space-y-3.5">
+            <h4 class="text-xs font-extrabold text-slate-400 uppercase tracking-wider">Contact Us</h4>
+            
+            <a href="https://wa.me/923027374880?text=Hello%20GG%20Digi%20Book%20Support" target="_blank" class="w-full flex items-center justify-between p-3.5 rounded-2xl bg-emerald-500 hover:bg-emerald-600 text-white transition active:scale-[0.98] shadow-md shadow-emerald-500/20">
+              <div class="flex items-center gap-3">
+                <div class="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center text-lg">
+                  💬
+                </div>
+                <div>
+                  <p class="text-xs font-black tracking-wide">WhatsApp Support</p>
+                  <p class="text-[11px] text-emerald-100 font-medium">0302-7374880</p>
+                </div>
+              </div>
+              <span class="text-[11px] font-black bg-white text-emerald-800 px-3 py-1.5 rounded-xl shadow-sm">
+                Chat Now →
+              </span>
+            </a>
+
+            <div>
+              <p class="text-[11px] font-bold text-slate-500 mb-2.5">Connect Across Platforms</p>
+              <div class="grid grid-cols-5 gap-2">
+                <a href="https://www.youtube.com/@globalguruofficial1" target="_blank" title="YouTube" class="flex flex-col items-center justify-center p-2.5 rounded-2xl bg-white border border-slate-200/80 hover:border-red-500 hover:shadow-md transition active:scale-95 shadow-sm">
+                  <svg class="w-6 h-6 text-[#FF0000]" viewBox="0 0 24 24" fill="currentColor"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>
+                  <span class="text-[9px] font-bold text-slate-700 mt-1.5">YouTube</span>
+                </a>
+                <a href="https://web.facebook.com/globalguruofficial1" target="_blank" title="Facebook" class="flex flex-col items-center justify-center p-2.5 rounded-2xl bg-white border border-slate-200/80 hover:border-blue-600 hover:shadow-md transition active:scale-95 shadow-sm">
+                  <svg class="w-6 h-6 text-[#1877F2]" viewBox="0 0 24 24" fill="currentColor"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
+                  <span class="text-[9px] font-bold text-slate-700 mt-1.5">Facebook</span>
+                </a>
+                <a href="https://instagram.com/globalguruofficial1" target="_blank" title="Instagram" class="flex flex-col items-center justify-center p-2.5 rounded-2xl bg-white border border-slate-200/80 hover:border-pink-500 hover:shadow-md transition active:scale-95 shadow-sm">
+                  <svg class="w-6 h-6 text-[#E4405F]" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/></svg>
+                  <span class="text-[9px] font-bold text-slate-700 mt-1.5">Instagram</span>
+                </a>
+                <a href="https://www.tiktok.com/@globalguruofficial" target="_blank" title="TikTok" class="flex flex-col items-center justify-center p-2.5 rounded-2xl bg-white border border-slate-200/80 hover:border-black hover:shadow-md transition active:scale-95 shadow-sm">
+                  <svg class="w-6 h-6 text-black" viewBox="0 0 24 24" fill="currentColor"><path d="M12.525.02c1.31-.02 2.61-.01 3.91-.02.08 1.53.63 3.09 1.75 4.17 1.12 1.11 2.7 1.62 4.24 1.79v4.03c-1.44-.05-2.89-.35-4.2-.97-.57-.26-1.1-.59-1.62-.99v9.09c-.03 2.01-.84 4.02-2.34 5.37-1.63 1.49-3.92 2.16-6.09 1.81-2.2-.33-4.22-1.67-5.35-3.58-1.16-1.92-1.34-4.37-.5-6.38.86-2.02 2.72-3.53 4.88-3.99.78-.17 1.58-.2 2.37-.12v4.22c-.61-.08-1.25-.01-1.83.21-.82.3-1.49.95-1.83 1.76-.36.85-.31 1.84.14 2.64.44.8 1.25 1.36 2.15 1.49.99.16 2.04-.15 2.77-.85.66-.63 1.05-1.53 1.05-2.45V.02h.65z"/></svg>
+                  <span class="text-[9px] font-bold text-slate-700 mt-1.5">TikTok</span>
+                </a>
+                <a href="https://www.threads.net/@globalguruofficial1" target="_blank" title="Threads" class="flex flex-col items-center justify-center p-2.5 rounded-2xl bg-white border border-slate-200/80 hover:border-black hover:shadow-md transition active:scale-95 shadow-sm">
+                  <svg class="w-6 h-6 text-black" viewBox="0 0 192 192" fill="currentColor"><path d="M141.537 88.9883C140.71 88.5919 139.87 88.2109 139.019 87.8456C137.537 60.5382 122.616 44.905 97.5619 44.745C97.4484 44.7443 97.3355 44.7443 97.222 44.7443C82.2364 44.7443 69.7731 51.1409 62.102 62.7807L75.5727 72.8138C81.0827 64.4538 89.2612 60.7788 97.2341 60.7788C110.748 60.7788 119.537 69.6013 120.487 84.1506C113.626 83.1756 106.376 82.8093 98.7188 83.0569C72.0625 83.9169 55.4544 98.2431 56.0969 119.349C56.7088 139.467 73.0688 152.012 94.0625 152.012C108.799 152.012 119.981 145.474 126.791 133.029C132.846 144.159 143.141 150.144 157.069 150.144C174.197 150.144 186.281 138.834 186.281 118.892C186.281 83.2181 158.469 64.9125 120.891 64.9125C78.435 64.9125 47.9625 87.9712 47.9625 125.683C47.9625 152.128 66.525 170.835 96.0938 170.835C112.575 170.835 126.338 165.176 135.038 154.512L147.244 165.816C134.906 180.705 116.794 187.688 96.0938 187.688C56.2875 187.688 30.7125 162.248 30.7125 125.683C30.7125 76.5412 69.4125 48.0675 120.891 48.0675C170.775 48.0675 203.531 73.7437 203.531 118.892C203.531 148.164 184.95 166.995 157.069 166.995C139.631 166.995 127.144 158.625 121.284 144.188C114.712 153.281 104.981 157.942 93.6844 157.942C77.475 157.942 65.5125 147.536 64.9969 131.627C64.4469 114.675 77.2969 103.568 98.2406 102.898C105.797 102.656 113.128 103.181 120.084 104.426C118.912 95.8425 112.444 89.9625 101.466 89.9625C95.4281 89.9625 89.8781 92.205 85.9406 96.225L75.6094 84.8812C81.8531 78.4725 90.75 74.8725 101.466 74.8725C119.869 74.8725 133.725 84.7725 136.003 103.886C137.944 104.839 139.791 105.889 141.537 107.031V88.9883ZM120.084 117.892C113.888 116.897 107.381 116.488 100.678 116.702C88.2469 117.098 79.9594 122.951 80.2875 131.957C80.6062 140.719 88.7531 146.104 99.4594 146.104C108.975 146.104 116.634 140.404 120.084 130.414V117.892Z"/></svg>
+                  <span class="text-[9px] font-bold text-slate-700 mt-1.5">Threads</span>
+                </a>
+              </div>
+            </div>
+
+            <a href="https://linktr.ee/Globalguruofficial1" target="_blank" class="flex items-center justify-between p-3.5 rounded-2xl bg-slate-50 hover:bg-emerald-50 border border-slate-100 transition">
+              <div class="flex items-center gap-2.5">
+                <span class="text-base">🌲</span>
+                <div>
+                  <p class="text-xs font-bold text-slate-800">All Official Links (Linktree)</p>
+                  <p class="text-[10px] text-slate-400">linktr.ee/Globalguruofficial1</p>
+                </div>
+              </div>
+              <span class="text-xs font-bold text-emerald-700">Open →</span>
+            </a>
+          </div>
+        </div>
+
       </div>
+
     </div>
 
-    <!-- BOTTOM APP NAVIGATION BAR (3 TABS) -->
-    <nav class="fixed bottom-0 max-w-md w-full bg-white border-t border-slate-200 flex z-30 shadow-lg">
+    <!-- MOBILE BOTTOM NAVIGATION (Hidden on PC >= 768px) -->
+    <nav class="md:hidden fixed bottom-0 max-w-md w-full bg-white border-t border-slate-200 flex z-30 shadow-lg">
       <button id="tab-btn-ledger" onclick="switchTab('ledger')" class="flex-1 py-2.5 text-center text-emerald-700 font-extrabold text-xs flex flex-col items-center gap-1 border-t-2 border-emerald-600 transition">
         <span class="text-base">📖</span> Khata
       </button>
@@ -1292,9 +1552,9 @@
 
   </div>
 
-  <!-- 4. CUSTOMER LEDGER MODAL -->
-  <div id="tx-modal" onclick="closeModal()" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-    <div onclick="event.stopPropagation()" class="bg-white w-full max-w-md max-h-[92vh] rounded-t-3xl sm:rounded-3xl p-5 shadow-2xl flex flex-col overflow-hidden animate-in">
+  <!-- 4. CUSTOMER LEDGER MODAL (Only Used on Mobile Screens) -->
+  <div id="tx-modal" onclick="closeModal()" class="md:hidden hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-end justify-center p-0">
+    <div onclick="event.stopPropagation()" class="bg-white w-full max-w-md max-h-[92vh] rounded-t-3xl p-5 shadow-2xl flex flex-col overflow-hidden animate-in">
       
       <div class="flex justify-between items-start pb-3 border-b border-slate-100">
         <div>
@@ -1328,13 +1588,13 @@
         <div class="grid grid-cols-2 gap-2">
           <div>
             <input type="text" id="tx-amount" onkeydown="handleFormulaInput(event, 'diye')" placeholder="Amount or 500+6000" class="w-full text-xs font-bold p-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none">
-            <span class="text-[9px] text-slate-400 mt-0.5 block font-medium">Type math & press Enter</span>
+            <span class="text-[9px] text-slate-400 mt-0.5 block font-medium">Type formula & Enter</span>
           </div>
           
           <div class="relative flex items-center">
             <input type="text" id="tx-note" onkeydown="if(event.key==='Enter') addTransaction('diye')" placeholder="Note / Description" class="w-full text-xs p-2.5 pr-14 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none">
             <div class="absolute right-1.5 flex items-center gap-1">
-              <button id="mic-btn" onclick="startSpeechRecognition()" title="Voice to Text" class="p-1 rounded-lg text-slate-400 hover:text-emerald-700 text-sm transition">🎙️</button>
+              <button id="mic-btn" onclick="startSpeechRecognition(false)" title="Voice to Text" class="p-1 rounded-lg text-slate-400 hover:text-emerald-700 text-sm transition">🎙️</button>
               <label for="receipt-camera-input" title="Attach Receipt/Bill" class="p-1 rounded-lg text-slate-400 hover:text-emerald-700 text-sm cursor-pointer transition">📸</label>
               <input id="receipt-camera-input" type="file" accept="image/*" capture="environment" onchange="handleReceiptUpload(event)" class="hidden">
             </div>
@@ -1343,10 +1603,10 @@
 
         <div class="grid grid-cols-2 gap-2">
           <button onclick="addTransaction('diye')" class="py-2.5 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white text-xs font-bold rounded-xl shadow-md shadow-rose-600/10 transition flex items-center justify-center gap-1.5">
-            <span>🔴</span> CASH OUT (You Gave)
+            <span>🔴</span> CASH OUT
           </button>
           <button onclick="addTransaction('liye')" class="py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-bold rounded-xl shadow-md shadow-emerald-600/10 transition flex items-center justify-center gap-1.5">
-            <span>🟢</span> CASH IN (You Got)
+            <span>🟢</span> CASH IN
           </button>
         </div>
 
