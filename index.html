@@ -329,7 +329,6 @@
       });
     }
 
-    // STRICT ISOLATION: Only explicit Galla entries (isGallaEntry === true) affect Galla Cashbook!
     function listenAllTransactions() {
       const q = query(collection(db, "transactions"), where("userId", "==", currentUser.uid));
       onSnapshot(q, (snapshot) => {
@@ -340,7 +339,6 @@
         snapshot.forEach(docSnap => {
           const data = { id: docSnap.id, ...docSnap.data() };
 
-          // Khata Book entries (without isGallaEntry) will NOT affect Cashbook!
           if (data.isGallaEntry === true) {
             gallaTxHistory.push(data);
 
@@ -459,7 +457,7 @@
     function populateAccountSelectDropdown() {
       const select = document.getElementById('galla-party-select');
       if (!select) return;
-      select.innerHTML = '<option value="">-- Choose Account / Party --</option>';
+      select.innerHTML = '<option value="">-- Direct Cash (Counter / No Party) --</option>';
       customersList.forEach(c => {
         const opt = document.createElement('option');
         opt.value = c.id;
@@ -648,7 +646,7 @@
           type: type,
           amount: evaluated,
           note: noteInput.value.trim(),
-          isGallaEntry: false, // Strict flag: NOT a galla cash entry!
+          isGallaEntry: false,
           receiptImage: attachedPhotoBase64 || "",
           createdAt: new Date().toISOString()
         });
@@ -664,7 +662,7 @@
       }
     };
 
-    // GALLA CASH ENTRY: Explicitly marked with isGallaEntry: true
+    // GALLA CASH ENTRY: Party selection is OPTIONAL now! Supports Direct Cash / Expense
     window.processGallaAccountEntry = async (actionType) => {
       const partySelect = document.getElementById('galla-party-select');
       const amountInput = document.getElementById('galla-entry-amount');
@@ -674,10 +672,6 @@
       const evaluated = evaluateExpression(amountInput.value);
       const note = noteInput.value.trim();
 
-      if (!customerId) {
-        alert("Pehle Account / Party (e.g. Jazz, Zong, JazzCash) select karein!");
-        return;
-      }
       if (!evaluated || evaluated <= 0) {
         alert("Please enter a valid amount or formula (e.g. 500+6000)!");
         return;
@@ -685,42 +679,49 @@
 
       amountInput.value = evaluated;
       const partyObj = customersList.find(c => c.id === customerId);
-      if (!partyObj) return;
 
-      let txTypeForParty = '';
-      let partyBalanceDiff = 0;
-
+      // Sound play
       if (actionType === 'in') {
-        txTypeForParty = 'liye';
-        partyBalanceDiff = -evaluated;
         playSound('credit');
       } else {
-        txTypeForParty = 'diye';
-        partyBalanceDiff = evaluated;
         playSound('debit');
       }
 
-      const newPartyBalance = (partyObj.balance || 0) + partyBalanceDiff;
+      // If a party is selected, update that party's ledger balance
+      let txTypeForParty = actionType === 'in' ? 'liye' : 'diye';
+      if (partyObj) {
+        const partyBalanceDiff = actionType === 'in' ? -evaluated : evaluated;
+        const newPartyBalance = (partyObj.balance || 0) + partyBalanceDiff;
+        try {
+          await updateDoc(doc(db, "customers", partyObj.id), { balance: newPartyBalance });
+        } catch (e) {
+          console.warn("Could not update customer balance", e);
+        }
+      }
+
+      const defaultNote = partyObj 
+        ? (actionType === 'in' ? `Cash In from ${partyObj.name}` : `Cash Out to ${partyObj.name}`)
+        : (actionType === 'in' ? `Counter Cash In` : `Counter Cash Out`);
 
       try {
-        await updateDoc(doc(db, "customers", partyObj.id), { balance: newPartyBalance });
         await addDoc(collection(db, "transactions"), {
           userId: currentUser.uid,
-          customerId: partyObj.id,
-          customerName: partyObj.name,
+          customerId: partyObj ? partyObj.id : "direct_cash",
+          customerName: partyObj ? partyObj.name : "Direct Cash",
           type: txTypeForParty,
           amount: evaluated,
-          note: note || (actionType === 'in' ? `Galla Cash In from ${partyObj.name}` : `Galla Cash Out to ${partyObj.name}`),
-          isGallaEntry: true, // Mark this explicitly as a Galla entry
+          note: note || defaultNote,
+          isGallaEntry: true,
           gallaAction: actionType,
           createdAt: new Date().toISOString()
         });
 
         amountInput.value = '';
         noteInput.value = '';
+        partySelect.value = '';
         playSound('success');
       } catch (err) {
-        alert("Error updating account: " + err.message);
+        alert("Error updating cash book: " + err.message);
       }
     };
 
@@ -742,7 +743,7 @@
 
         row.innerHTML = `
           <td class="p-2.5 text-slate-500 font-medium">${dateStr}</td>
-          <td class="p-2.5 font-bold text-slate-800">${t.customerName || 'Account'}</td>
+          <td class="p-2.5 font-bold text-slate-800">${t.customerName || 'Direct Cash'}</td>
           <td class="p-2.5">
             <span class="px-2 py-0.5 rounded-md text-[10px] font-black ${isCashIn ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}">
               ${isCashIn ? 'CASH IN' : 'CASH OUT'}
@@ -824,7 +825,7 @@
 
         return [
           dateStr,
-          t.customerName || 'Cash Account',
+          t.customerName || 'Direct Cash',
           isCashIn ? 'CASH IN (+)' : 'CASH OUT (-)',
           t.note || '-',
           `${isCashIn ? '+' : '-'} Rs. ${amt.toLocaleString()}`,
@@ -940,7 +941,6 @@
       pdf.save(`${selectedCustomer.name}_Ledger.pdf`);
     };
 
-    // Download Backup (CSV / JSON with Bottom Branding)
     window.downloadBackup = async () => {
       playSound('tap');
       const choice = prompt("Select Backup Format:\n1 = Excel Sheet (.CSV)\n2 = JSON Backup (.JSON - For Shifting Account)\n\nType 1 or 2 below:", "1");
@@ -1269,7 +1269,6 @@
         </nav>
       </div>
 
-      <!-- Desktop Sidebar Bottom Branding -->
       <div class="pt-4 border-t border-slate-100">
         <button onclick="logout()" class="w-full py-2.5 px-4 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold rounded-2xl text-xs transition flex items-center justify-center gap-2 mb-3">
           <span>🚪</span> Sign Out
@@ -1463,15 +1462,16 @@
         </div>
 
         <div class="grid grid-cols-1 md:grid-cols-12 gap-4 max-w-5xl mx-auto">
+          <!-- Galla Entry Box: Optional Party Dropdown -->
           <div class="md:col-span-5 bg-white p-5 rounded-3xl border border-slate-200/80 shadow-sm space-y-3.5">
             <div class="flex items-center justify-between">
-              <h4 class="text-xs font-extrabold text-slate-800 uppercase tracking-wider">Galla Entry (Account Link)</h4>
+              <h4 class="text-xs font-extrabold text-slate-800 uppercase tracking-wider">Galla Entry (Counter / Accounts)</h4>
               <span class="text-[10px] font-bold bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-md">Live Sync</span>
             </div>
-            <p class="text-[11px] text-slate-400">Account select karein aur formula likh kar Enter karein:</p>
+            <p class="text-[11px] text-slate-400">Party select karna optional hai. Khali chhorne par direct cash entry hogi:</p>
 
             <div>
-              <label class="text-[10px] font-bold text-slate-500 block mb-1">Select Account / Party:</label>
+              <label class="text-[10px] font-bold text-slate-500 block mb-1">Select Account / Party (Optional):</label>
               <select id="galla-party-select" class="w-full text-xs font-bold p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:border-emerald-500 outline-none"></select>
             </div>
 
@@ -1480,17 +1480,17 @@
                 <input type="text" id="galla-entry-amount" onkeydown="handleGallaFormulaInput(event, 'in')" placeholder="Amount or 500+6000" class="w-full text-xs font-bold p-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-emerald-500">
                 <span class="text-[9px] text-slate-400 mt-0.5 block font-medium">Supports +, -, *, / & Enter</span>
               </div>
-              <input type="text" id="galla-entry-note" onkeydown="if(event.key==='Enter') processGallaAccountEntry('in')" placeholder="Description/Note" class="w-full text-xs p-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-emerald-500">
+              <input type="text" id="galla-entry-note" onkeydown="if(event.key==='Enter') processGallaAccountEntry('in')" placeholder="Description / Note (e.g. Chai, Sale, Bill)" class="w-full text-xs p-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-emerald-500">
             </div>
 
             <div class="grid grid-cols-2 gap-2 pt-1">
               <button onclick="processGallaAccountEntry('in')" class="py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-black rounded-xl shadow-md transition flex flex-col items-center">
                 <span>+ CASH IN (Aaya)</span>
-                <span class="text-[9px] font-normal text-emerald-100">Galla +, Account Minus</span>
+                <span class="text-[9px] font-normal text-emerald-100">Galla +</span>
               </button>
               <button onclick="processGallaAccountEntry('out')" class="py-2.5 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white text-xs font-black rounded-xl shadow-md transition flex flex-col items-center">
                 <span>- CASH OUT (Gaya)</span>
-                <span class="text-[9px] font-normal text-rose-100">Galla -, Account Plus</span>
+                <span class="text-[9px] font-normal text-rose-100">Galla -</span>
               </button>
             </div>
           </div>
@@ -1628,7 +1628,6 @@
             </a>
           </div>
 
-          <!-- Bottom Screen Footer Branding -->
           <div class="flex items-center justify-center gap-2 py-4 text-slate-400 text-xs font-bold">
             <img src="logo.png" alt="GG" class="w-4 h-4 rounded-full object-contain">
             <span>GG Digi Book • Powered by Global Guru</span>
