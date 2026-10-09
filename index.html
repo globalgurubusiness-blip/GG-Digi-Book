@@ -23,7 +23,7 @@
       getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged 
     } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
     import { 
-      getFirestore, collection, addDoc, onSnapshot, query, where, doc, updateDoc, deleteDoc, getDocs 
+      getFirestore, collection, addDoc, onSnapshot, query, where, doc, setDoc, updateDoc, deleteDoc, getDocs 
     } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
     const firebaseConfig = {
@@ -49,6 +49,12 @@
     let unsubscribeTx = null;
     let attachedPhotoBase64 = "";
     let gallaTxHistory = [];
+
+    // Galla Rolling Balances
+    let gallaOpeningBalance = 0;
+    let gallaTotalIn = 0;
+    let gallaTotalOut = 0;
+    let gallaClosingCash = 0;
 
     // Web Audio Synthesizer Engine
     let audioCtx = null;
@@ -154,7 +160,6 @@
       }
     };
 
-    // Math Formula Evaluator for Amount Calculator
     window.evaluateExpression = (inputVal) => {
       if (!inputVal) return 0;
       let cleaned = inputVal.toString().replace(/[^0-9+\-*/().]/g, '');
@@ -177,6 +182,7 @@
         document.getElementById('settings-user-name').innerText = user.displayName || 'Authorized User';
         loadCustomers();
         listenAllTransactions();
+        listenGallaMetadata();
       } else {
         document.getElementById('login-screen').classList.remove('hidden');
         document.getElementById('app-screen').classList.add('hidden');
@@ -221,6 +227,7 @@
         accountsView.classList.remove('hidden');
         tabAccountsBtn.className = activeClass;
         populateAccountSelectDropdown();
+        recalculateGallaStrip();
       } else if (tab === 'settings') {
         settingsView.classList.remove('hidden');
         tabSettingsBtn.className = activeClass;
@@ -271,17 +278,80 @@
       }, (err) => console.error("Firestore Error:", err));
     }
 
+    // Galla Metadata (Opening Balance Sync)
+    function listenGallaMetadata() {
+      const metaRef = doc(db, "galla_meta", currentUser.uid);
+      onSnapshot(metaRef, (docSnap) => {
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          gallaOpeningBalance = Number(data.openingBalance || 0);
+        } else {
+          gallaOpeningBalance = 0;
+        }
+        recalculateGallaStrip();
+      });
+    }
+
     function listenAllTransactions() {
       const q = query(collection(db, "transactions"), where("userId", "==", currentUser.uid));
       onSnapshot(q, (snapshot) => {
         gallaTxHistory = [];
+        gallaTotalIn = 0;
+        gallaTotalOut = 0;
+
         snapshot.forEach(docSnap => {
-          gallaTxHistory.push({ id: docSnap.id, ...docSnap.data() });
+          const data = { id: docSnap.id, ...docSnap.data() };
+          gallaTxHistory.push(data);
+
+          if (data.isGallaEntry) {
+            if (data.gallaAction === 'in') {
+              gallaTotalIn += Number(data.amount || 0);
+            } else if (data.gallaAction === 'out') {
+              gallaTotalOut += Number(data.amount || 0);
+            }
+          }
         });
+
         gallaTxHistory.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+        recalculateGallaStrip();
         renderGallaTransactionsTable();
       });
     }
+
+    function recalculateGallaStrip() {
+      gallaClosingCash = gallaOpeningBalance + gallaTotalIn - gallaTotalOut;
+
+      const opEl = document.getElementById('galla-strip-opening');
+      const inEl = document.getElementById('galla-strip-in');
+      const outEl = document.getElementById('galla-strip-out');
+      const closeEl = document.getElementById('galla-strip-closing');
+
+      if (opEl) opEl.innerText = `Rs. ${gallaOpeningBalance.toLocaleString()}`;
+      if (inEl) inEl.innerText = `Rs. ${gallaTotalIn.toLocaleString()}`;
+      if (outEl) outEl.innerText = `Rs. ${gallaTotalOut.toLocaleString()}`;
+      if (closeEl) closeEl.innerText = `Rs. ${gallaClosingCash.toLocaleString()}`;
+    }
+
+    window.editOpeningBalance = async () => {
+      playSound('tap');
+      const val = prompt("Apna Galla Opening (Base) Balance likhein:", gallaOpeningBalance);
+      if (val === null) return;
+      const num = evaluateExpression(val);
+      if (isNaN(num)) {
+        alert("Please enter a valid number!");
+        return;
+      }
+
+      try {
+        await setDoc(doc(db, "galla_meta", currentUser.uid), {
+          openingBalance: num,
+          updatedAt: new Date().toISOString()
+        }, { merge: true });
+        playSound('success');
+      } catch (err) {
+        alert("Error updating opening balance: " + err.message);
+      }
+    };
 
     window.renderCustomers = () => {
       const searchVal = document.getElementById('search-input').value.toLowerCase();
@@ -461,18 +531,10 @@
       if (unsubscribeTx) unsubscribeTx();
     };
 
-    // Calculate formula in real-time or on Enter key
     window.handleFormulaInput = (event, type = 'diye') => {
-      const raw = event.target.value;
-      if (/[+\-*/]/.test(raw)) {
-        const val = evaluateExpression(raw);
-        if (val > 0) {
-          event.target.title = `Calculated: Rs. ${val}`;
-        }
-      }
       if (event.key === 'Enter') {
         event.preventDefault();
-        const calculated = evaluateExpression(raw);
+        const calculated = evaluateExpression(event.target.value);
         if (calculated > 0) {
           event.target.value = calculated;
         }
@@ -483,8 +545,7 @@
     window.handleGallaFormulaInput = (event, actionType = 'in') => {
       if (event.key === 'Enter') {
         event.preventDefault();
-        const raw = event.target.value;
-        const calculated = evaluateExpression(raw);
+        const calculated = evaluateExpression(event.target.value);
         if (calculated > 0) {
           event.target.value = calculated;
         }
@@ -578,7 +639,7 @@
           type: txTypeForParty,
           amount: evaluated,
           note: note || (actionType === 'in' ? `Galla Cash In from ${partyObj.name}` : `Galla Cash Out to ${partyObj.name}`),
-          isGallaReconciled: true,
+          isGallaEntry: true,
           gallaAction: actionType,
           createdAt: new Date().toISOString()
         });
@@ -596,15 +657,17 @@
       if (!listEl) return;
       listEl.innerHTML = '';
 
-      if (gallaTxHistory.length === 0) {
+      const filteredGallaTx = gallaTxHistory.filter(t => t.isGallaEntry);
+
+      if (filteredGallaTx.length === 0) {
         listEl.innerHTML = '<tr><td colspan="4" class="p-4 text-center text-xs text-slate-400">No cash entries recorded yet.</td></tr>';
         return;
       }
 
-      gallaTxHistory.slice(0, 15).forEach(t => {
+      filteredGallaTx.slice(0, 15).forEach(t => {
         const row = document.createElement('tr');
         row.className = "border-b border-slate-100 hover:bg-slate-50 text-xs";
-        const isCashIn = t.type === 'liye';
+        const isCashIn = t.gallaAction === 'in';
         const dateStr = new Date(t.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
 
         row.innerHTML = `
@@ -687,7 +750,8 @@
             totalCustomers: custSnap.docs.length,
             totalTransactions: txSnap.docs.length,
             customers: custSnap.docs.map(d => ({ id: d.id, ...d.data() })),
-            transactions: txSnap.docs.map(d => ({ id: d.id, ...d.data() }))
+            transactions: txSnap.docs.map(d => ({ id: d.id, ...d.data() })),
+            gallaMeta: { openingBalance: gallaOpeningBalance }
           };
 
           const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: "application/json" });
@@ -750,9 +814,17 @@
               type: tx.type || "diye",
               amount: tx.amount || 0,
               note: tx.note || "",
+              isGallaEntry: tx.isGallaEntry || false,
+              gallaAction: tx.gallaAction || "",
               receiptImage: tx.receiptImage || "",
               createdAt: tx.createdAt || new Date().toISOString()
             });
+          }
+
+          if (imported.gallaMeta && imported.gallaMeta.openingBalance) {
+            await setDoc(doc(db, "galla_meta", currentUser.uid), {
+              openingBalance: Number(imported.gallaMeta.openingBalance)
+            }, { merge: true });
           }
 
           playSound('success');
@@ -1005,9 +1077,46 @@
       </div>
     </div>
 
-    <!-- PAGE 2: ACCOUNTS / GALLA LINKED ENTRY VIEW (Audit Box Removed) -->
+    <!-- PAGE 2: ACCOUNTS / GALLA WITH OPENING & CLOSING STRIP -->
     <div id="view-accounts" class="hidden flex-1 p-4 pb-20 space-y-4 overflow-y-auto bg-slate-50/70">
       
+      <!-- TOP STRIP: OPENING, CASH IN, CASH OUT, CLOSING CASH -->
+      <div class="bg-white p-3.5 rounded-3xl border border-slate-200/90 shadow-sm space-y-2.5">
+        <div class="flex items-center justify-between">
+          <span class="text-[10px] font-black text-slate-400 uppercase tracking-wider">Live Galla Cash Flow</span>
+          <span class="text-[9px] font-bold bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">Continuous Rolling</span>
+        </div>
+
+        <div class="grid grid-cols-4 gap-1.5 text-center">
+          <!-- 1. Opening Balance -->
+          <div class="bg-slate-50 p-2 rounded-2xl border border-slate-100 flex flex-col justify-between">
+            <div class="flex items-center justify-center gap-1">
+              <span class="text-[9px] font-bold text-slate-500 uppercase">Opening</span>
+              <button onclick="editOpeningBalance()" title="Set/Edit Opening Balance" class="text-[10px] text-emerald-700 hover:text-emerald-900 transition">✏️</button>
+            </div>
+            <h5 id="galla-strip-opening" class="text-xs font-black text-slate-800 mt-1">Rs. 0</h5>
+          </div>
+
+          <!-- 2. Cash In -->
+          <div class="bg-emerald-50/60 p-2 rounded-2xl border border-emerald-100 flex flex-col justify-between">
+            <span class="text-[9px] font-bold text-emerald-700 uppercase">Cash In (+)</span>
+            <h5 id="galla-strip-in" class="text-xs font-black text-emerald-600 mt-1">Rs. 0</h5>
+          </div>
+
+          <!-- 3. Cash Out -->
+          <div class="bg-rose-50/60 p-2 rounded-2xl border border-rose-100 flex flex-col justify-between">
+            <span class="text-[9px] font-bold text-rose-700 uppercase">Cash Out (-)</span>
+            <h5 id="galla-strip-out" class="text-xs font-black text-rose-600 mt-1">Rs. 0</h5>
+          </div>
+
+          <!-- 4. Closing Cash -->
+          <div class="bg-slate-900 text-white p-2 rounded-2xl shadow-sm flex flex-col justify-between">
+            <span class="text-[9px] font-bold text-emerald-400 uppercase">Closing</span>
+            <h5 id="galla-strip-closing" class="text-xs font-black text-white mt-1">Rs. 0</h5>
+          </div>
+        </div>
+      </div>
+
       <!-- Galla Entry With Linked Accounts & Calculator -->
       <div class="bg-white p-4 rounded-3xl border border-slate-200/80 shadow-sm space-y-3">
         <div class="flex items-center justify-between">
@@ -1135,7 +1244,7 @@
           </span>
         </a>
 
-        <!-- Social Media Grid Icons (Exact Direct Handles) -->
+        <!-- Social Media Grid Icons -->
         <div>
           <p class="text-[11px] font-bold text-slate-500 mb-2.5">Connect Across Platforms</p>
           <div class="grid grid-cols-5 gap-2">
@@ -1218,7 +1327,7 @@
 
   </div>
 
-  <!-- 4. CUSTOMER LEDGER MODAL (Direct Enter Key & Calculator Support) -->
+  <!-- 4. CUSTOMER LEDGER MODAL -->
   <div id="tx-modal" onclick="closeModal()" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
     <div onclick="event.stopPropagation()" class="bg-white w-full max-w-md max-h-[92vh] rounded-t-3xl sm:rounded-3xl p-5 shadow-2xl flex flex-col overflow-hidden animate-in">
       
@@ -1243,7 +1352,7 @@
         <div id="tx-history-list" class="space-y-1.5"></div>
       </div>
 
-      <!-- Entry Form & Actions (Direct Submit on Enter) -->
+      <!-- Entry Form & Actions -->
       <div class="pt-3 border-t border-slate-100 bg-slate-50/80 -mx-5 -mb-5 p-5 rounded-b-3xl space-y-3">
         
         <!-- Photo Preview -->
