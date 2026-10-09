@@ -49,9 +49,9 @@
     let unsubscribeTx = null;
     let attachedPhotoBase64 = "";
 
-    // App Net Ledger Balance for Galla Cross Match
     let appCalculatedNetBalance = 0;
     let pendingEntryType = 'diye';
+    let gallaTxHistory = [];
 
     // Web Audio Synthesizer Engine
     let audioCtx = null;
@@ -166,6 +166,7 @@
         document.getElementById('settings-user-email').innerText = user.email || 'N/A';
         document.getElementById('settings-user-name').innerText = user.displayName || 'Authorized User';
         loadCustomers();
+        listenAllTransactions();
       } else {
         document.getElementById('login-screen').classList.remove('hidden');
         document.getElementById('app-screen').classList.add('hidden');
@@ -182,7 +183,6 @@
       signOut(auth);
     };
 
-    // 3-Page Navigation Switcher
     window.switchTab = (tab) => {
       playSound('tap');
       const ledgerView = document.getElementById('view-ledger');
@@ -210,6 +210,7 @@
       } else if (tab === 'accounts') {
         accountsView.classList.remove('hidden');
         tabAccountsBtn.className = activeClass;
+        populateAccountSelectDropdown();
         calculateSingleGallaAudit();
       } else if (tab === 'settings') {
         settingsView.classList.remove('hidden');
@@ -259,8 +260,21 @@
         }
 
         renderCustomers();
+        populateAccountSelectDropdown();
         calculateSingleGallaAudit();
       }, (err) => console.error("Firestore Error:", err));
+    }
+
+    function listenAllTransactions() {
+      const q = query(collection(db, "transactions"), where("userId", "==", currentUser.uid));
+      onSnapshot(q, (snapshot) => {
+        gallaTxHistory = [];
+        snapshot.forEach(docSnap => {
+          gallaTxHistory.push({ id: docSnap.id, ...docSnap.data() });
+        });
+        gallaTxHistory.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+        renderGallaTransactionsTable();
+      });
     }
 
     window.renderCustomers = () => {
@@ -318,6 +332,18 @@
       });
     };
 
+    function populateAccountSelectDropdown() {
+      const select = document.getElementById('galla-party-select');
+      if (!select) return;
+      select.innerHTML = '<option value="">-- Choose Account / Party --</option>';
+      customersList.forEach(c => {
+        const opt = document.createElement('option');
+        opt.value = c.id;
+        opt.innerText = `${c.name} (Balance: Rs. ${Number(c.balance || 0).toLocaleString()})`;
+        select.appendChild(opt);
+      });
+    }
+
     window.setFilter = (type) => {
       playSound('tap');
       currentFilter = type;
@@ -334,9 +360,9 @@
 
     window.addNewCustomer = async () => {
       playSound('tap');
-      const name = prompt("Enter customer name:");
+      const name = prompt("Enter customer/account name (e.g. Jazz, Zong, JazzCash):");
       if (!name || !name.trim()) return;
-      const phone = prompt("Enter customer phone/WhatsApp number:") || "";
+      const phone = prompt("Enter phone number (optional):") || "";
 
       try {
         await addDoc(collection(db, "customers"), {
@@ -427,7 +453,6 @@
       if (unsubscribeTx) unsubscribeTx();
     };
 
-    // Entry Mode Sheet Trigger
     window.openEntrySheet = (type) => {
       playSound('tap');
       pendingEntryType = type;
@@ -443,7 +468,7 @@
     };
 
     window.selectEntryMode = (mode) => {
-      closeEntrySheet(); // Turant pop-up sheet hide hogi
+      closeEntrySheet();
       if (mode === 'image') {
         document.getElementById('receipt-camera-input').click();
       } else if (mode === 'voice') {
@@ -454,7 +479,7 @@
     };
 
     window.submitQuickEntry = () => {
-      closeEntrySheet(); // Confirm dabate hi sheet hide hogi
+      closeEntrySheet();
       addTransaction(pendingEntryType);
     };
 
@@ -478,6 +503,7 @@
         await addDoc(collection(db, "transactions"), {
           userId: currentUser.uid,
           customerId: selectedCustomer.id,
+          customerName: selectedCustomer.name,
           type: type,
           amount: amount,
           note: noteInput.value.trim(),
@@ -494,6 +520,276 @@
       } catch (err) {
         alert("Error saving transaction: " + err.message);
       }
+    };
+
+    // Direct Cash In & Cash Out Linked to Accounts (Jazz, Zong, etc.)
+    window.processGallaAccountEntry = async (actionType) => {
+      const partySelect = document.getElementById('galla-party-select');
+      const amountInput = document.getElementById('galla-entry-amount');
+      const noteInput = document.getElementById('galla-entry-note');
+
+      const customerId = partySelect.value;
+      const amount = parseFloat(amountInput.value);
+      const note = noteInput.value.trim();
+
+      if (!customerId) {
+        alert("Pehle Account / Party (e.g. Jazz, Zong, JazzCash) select karein!");
+        return;
+      }
+      if (!amount || amount <= 0) {
+        alert("Please enter a valid amount!");
+        return;
+      }
+
+      const partyObj = customersList.find(c => c.id === customerId);
+      if (!partyObj) return;
+
+      let txTypeForParty = '';
+      let partyBalanceDiff = 0;
+
+      if (actionType === 'in') {
+        // Galle mein paisa AAYA: Party se minus hoga
+        txTypeForParty = 'liye'; // Credit party account (- balance)
+        partyBalanceDiff = -amount;
+        playSound('credit');
+      } else {
+        // Galle se paisa GAYA: Party mein jama hoga
+        txTypeForParty = 'diye'; // Debit party account (+ balance)
+        partyBalanceDiff = amount;
+        playSound('debit');
+      }
+
+      const newPartyBalance = (partyObj.balance || 0) + partyBalanceDiff;
+
+      try {
+        await updateDoc(doc(db, "customers", partyObj.id), { balance: newPartyBalance });
+        await addDoc(collection(db, "transactions"), {
+          userId: currentUser.uid,
+          customerId: partyObj.id,
+          customerName: partyObj.name,
+          type: txTypeForParty,
+          amount: amount,
+          note: note || (actionType === 'in' ? `Galla Cash In from ${partyObj.name}` : `Galla Cash Out to ${partyObj.name}`),
+          isGallaReconciled: true,
+          gallaAction: actionType,
+          createdAt: new Date().toISOString()
+        });
+
+        amountInput.value = '';
+        noteInput.value = '';
+        playSound('success');
+      } catch (err) {
+        alert("Error updating account: " + err.message);
+      }
+    };
+
+    function renderGallaTransactionsTable() {
+      const listEl = document.getElementById('galla-history-tbody');
+      if (!listEl) return;
+      listEl.innerHTML = '';
+
+      if (gallaTxHistory.length === 0) {
+        listEl.innerHTML = '<tr><td colspan="4" class="p-4 text-center text-xs text-slate-400">No cash entries recorded yet.</td></tr>';
+        return;
+      }
+
+      gallaTxHistory.slice(0, 15).forEach(t => {
+        const row = document.createElement('tr');
+        row.className = "border-b border-slate-100 hover:bg-slate-50 text-xs";
+        const isCashIn = t.type === 'liye';
+        const dateStr = new Date(t.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+
+        row.innerHTML = `
+          <td class="p-2.5 text-slate-500 font-medium">${dateStr}</td>
+          <td class="p-2.5 font-bold text-slate-800">${t.customerName || 'Account'}</td>
+          <td class="p-2.5">
+            <span class="px-2 py-0.5 rounded-md text-[10px] font-black ${isCashIn ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}">
+              ${isCashIn ? 'CASH IN' : 'CASH OUT'}
+            </span>
+          </td>
+          <td class="p-2.5 text-right font-black ${isCashIn ? 'text-emerald-600' : 'text-rose-600'}">
+            ${isCashIn ? '+' : '-'} Rs. ${Number(t.amount).toLocaleString()}
+          </td>
+        `;
+        listEl.appendChild(row);
+      });
+    }
+
+    window.calculateSingleGallaAudit = () => {
+      const gallaInputVal = parseFloat(document.getElementById('single-galla-amount').value) || 0;
+      document.getElementById('total-physical-cash').innerText = `Rs. ${gallaInputVal.toLocaleString()}`;
+
+      const expectedAmount = appCalculatedNetBalance;
+      document.getElementById('expected-app-cash').innerText = `Rs. ${expectedAmount.toLocaleString()}`;
+
+      const diff = gallaInputVal - expectedAmount;
+      const diffEl = document.getElementById('audit-difference');
+      const badgeEl = document.getElementById('audit-status-badge');
+
+      diffEl.innerText = `Rs. ${Math.abs(diff).toLocaleString()}`;
+
+      if (diff === 0) {
+        diffEl.className = "text-2xl font-black text-emerald-600 tracking-tight";
+        badgeEl.className = "text-xs font-bold px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300";
+        badgeEl.innerText = "✅ Exact Match (Galla aur GG Digi Book Barabar)";
+      } else if (diff < 0) {
+        diffEl.className = "text-2xl font-black text-rose-600 tracking-tight";
+        badgeEl.className = "text-xs font-bold px-3 py-1 rounded-full bg-rose-100 text-rose-800 border border-rose-300";
+        badgeEl.innerText = `⚠️ Cash Short (Gally me Rs. ${Math.abs(diff).toLocaleString()} Kam Hain)`;
+      } else {
+        diffEl.className = "text-2xl font-black text-blue-600 tracking-tight";
+        badgeEl.className = "text-xs font-bold px-3 py-1 rounded-full bg-blue-100 text-blue-800 border border-blue-300";
+        badgeEl.innerText = `💡 Excess Cash (Gally me Rs. ${diff.toLocaleString()} Ziada Hain)`;
+      }
+    };
+
+    window.resetGallaInput = () => {
+      playSound('tap');
+      document.getElementById('single-galla-amount').value = '';
+      calculateSingleGallaAudit();
+    };
+
+    window.downloadBackup = async () => {
+      playSound('tap');
+      const choice = prompt("Select Backup Format:\n1 = Excel Sheet (.CSV)\n2 = JSON Backup (.JSON - For Shifting Account)\n\nType 1 or 2 below:", "1");
+      
+      if (!choice || (choice !== "1" && choice !== "2")) {
+        return;
+      }
+
+      playSound('download');
+      try {
+        const qCust = query(collection(db, "customers"), where("userId", "==", currentUser.uid));
+        const qTx = query(collection(db, "transactions"), where("userId", "==", currentUser.uid));
+
+        const [custSnap, txSnap] = await Promise.all([
+          getDocs(qCust),
+          getDocs(qTx)
+        ]);
+
+        const dateStr = new Date().toISOString().slice(0, 10);
+
+        if (choice === "1") {
+          const customersMap = {};
+          custSnap.docs.forEach(d => {
+            customersMap[d.id] = d.data();
+          });
+
+          let csv = "Transaction ID,Date,Customer Name,Phone,Type,Given Debit,Received Credit,Note\n";
+
+          txSnap.docs.forEach(d => {
+            const t = d.data();
+            const cust = customersMap[t.customerId] || { name: "Unknown", phone: "" };
+            const dt = new Date(t.createdAt).toLocaleString('en-GB');
+            const type = t.type === 'diye' ? 'Gave (Debit)' : 'Got (Credit)';
+            const debit = t.type === 'diye' ? t.amount : 0;
+            const credit = t.type === 'liye' ? t.amount : 0;
+            const note = (t.note || '').replace(/"/g, '""');
+
+            csv += `"${d.id}","${dt}","${cust.name}","${cust.phone}","${type}",${debit},${credit},"${note}"\n`;
+          });
+
+          csv += "\n\nCustomer Summary\nCustomer Name,Phone,Current Balance,Status\n";
+          custSnap.docs.forEach(d => {
+            const c = d.data();
+            const status = c.balance >= 0 ? "You Will Get" : "You Will Give";
+            csv += `"${c.name}","${c.phone}",${Math.abs(c.balance || 0)},"${status}"\n`;
+          });
+
+          const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = `GG_DigiBook_Ledger_${dateStr}.csv`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+
+        } else if (choice === "2") {
+          const backupData = {
+            exportDate: new Date().toISOString(),
+            user: currentUser.email,
+            totalCustomers: custSnap.docs.length,
+            totalTransactions: txSnap.docs.length,
+            customers: custSnap.docs.map(d => ({ id: d.id, ...d.data() })),
+            transactions: txSnap.docs.map(d => ({ id: d.id, ...d.data() }))
+          };
+
+          const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: "application/json" });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = `GG_DigiBook_Backup_${dateStr}.json`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        }
+      } catch (err) {
+        alert("Backup failed: " + err.message);
+      }
+    };
+
+    window.triggerImportBackup = () => {
+      playSound('tap');
+      document.getElementById('import-json-input').click();
+    };
+
+    window.handleImportBackupFile = async (event) => {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      const confirmRestore = confirm("Are you sure you want to import this ledger backup into your current account? Data will be synced safely.");
+      if (!confirmRestore) {
+        event.target.value = "";
+        return;
+      }
+
+      playSound('tap');
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        try {
+          const imported = JSON.parse(e.target.result);
+          if (!imported.customers || !imported.transactions) {
+            throw new Error("Invalid backup format. Please select an authentic GG Digi Book JSON backup.");
+          }
+
+          const customerIdMap = {};
+          for (const cust of imported.customers) {
+            const newCustRef = await addDoc(collection(db, "customers"), {
+              userId: currentUser.uid,
+              name: cust.name || "Customer",
+              phone: cust.phone || "",
+              balance: cust.balance || 0,
+              createdAt: cust.createdAt || new Date().toISOString()
+            });
+            customerIdMap[cust.id] = newCustRef.id;
+          }
+
+          for (const tx of imported.transactions) {
+            const mappedCustomerId = customerIdMap[tx.customerId] || tx.customerId;
+            await addDoc(collection(db, "transactions"), {
+              userId: currentUser.uid,
+              customerId: mappedCustomerId,
+              customerName: tx.customerName || "Customer",
+              type: tx.type || "diye",
+              amount: tx.amount || 0,
+              note: tx.note || "",
+              receiptImage: tx.receiptImage || "",
+              createdAt: tx.createdAt || new Date().toISOString()
+            });
+          }
+
+          playSound('success');
+          alert(`Successfully imported ${imported.customers.length} customers and ${imported.transactions.length} transactions to your account!`);
+          event.target.value = "";
+        } catch (err) {
+          alert("Import Error: " + err.message);
+          event.target.value = "";
+        }
+      };
+      reader.readAsText(file);
     };
 
     window.handleReceiptUpload = (event) => {
@@ -636,187 +932,6 @@
 
       pdf.save(`${selectedCustomer.name}_Ledger.pdf`);
     };
-
-    // PAGE 2: SINGLE-BOX GALLA AUDIT
-    window.calculateSingleGallaAudit = () => {
-      const gallaInputVal = parseFloat(document.getElementById('single-galla-amount').value) || 0;
-      document.getElementById('total-physical-cash').innerText = `Rs. ${gallaInputVal.toLocaleString()}`;
-
-      const expectedAmount = appCalculatedNetBalance;
-      document.getElementById('expected-app-cash').innerText = `Rs. ${expectedAmount.toLocaleString()}`;
-
-      const diff = gallaInputVal - expectedAmount;
-      const diffEl = document.getElementById('audit-difference');
-      const badgeEl = document.getElementById('audit-status-badge');
-
-      diffEl.innerText = `Rs. ${Math.abs(diff).toLocaleString()}`;
-
-      if (diff === 0) {
-        diffEl.className = "text-2xl font-black text-emerald-600 tracking-tight";
-        badgeEl.className = "text-xs font-bold px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300";
-        badgeEl.innerText = "✅ Exact Match (Galla aur GG Digi Book Barabar)";
-      } else if (diff < 0) {
-        diffEl.className = "text-2xl font-black text-rose-600 tracking-tight";
-        badgeEl.className = "text-xs font-bold px-3 py-1 rounded-full bg-rose-100 text-rose-800 border border-rose-300";
-        badgeEl.innerText = `⚠️ Cash Short (Gally me Rs. ${Math.abs(diff).toLocaleString()} Kam Hain)`;
-      } else {
-        diffEl.className = "text-2xl font-black text-blue-600 tracking-tight";
-        badgeEl.className = "text-xs font-bold px-3 py-1 rounded-full bg-blue-100 text-blue-800 border border-blue-300";
-        badgeEl.innerText = `💡 Excess Cash (Gally me Rs. ${diff.toLocaleString()} Ziada Hain)`;
-      }
-    };
-
-    window.resetGallaInput = () => {
-      playSound('tap');
-      document.getElementById('single-galla-amount').value = '';
-      calculateSingleGallaAudit();
-    };
-
-    // DUAL BACKUP HANDLER (CSV + JSON)
-    window.downloadBackup = async () => {
-      playSound('tap');
-      const choice = prompt("Select Backup Format:\n1 = Excel Sheet (.CSV)\n2 = JSON Backup (.JSON - For Shifting Account)\n\nType 1 or 2 below:", "1");
-      
-      if (!choice || (choice !== "1" && choice !== "2")) {
-        return;
-      }
-
-      playSound('download');
-      try {
-        const qCust = query(collection(db, "customers"), where("userId", "==", currentUser.uid));
-        const qTx = query(collection(db, "transactions"), where("userId", "==", currentUser.uid));
-
-        const [custSnap, txSnap] = await Promise.all([
-          getDocs(qCust),
-          getDocs(qTx)
-        ]);
-
-        const dateStr = new Date().toISOString().slice(0, 10);
-
-        if (choice === "1") {
-          const customersMap = {};
-          custSnap.docs.forEach(d => {
-            customersMap[d.id] = d.data();
-          });
-
-          let csv = "Transaction ID,Date,Customer Name,Phone,Type,Given Debit,Received Credit,Note\n";
-
-          txSnap.docs.forEach(d => {
-            const t = d.data();
-            const cust = customersMap[t.customerId] || { name: "Unknown", phone: "" };
-            const dt = new Date(t.createdAt).toLocaleString('en-GB');
-            const type = t.type === 'diye' ? 'Gave (Debit)' : 'Got (Credit)';
-            const debit = t.type === 'diye' ? t.amount : 0;
-            const credit = t.type === 'liye' ? t.amount : 0;
-            const note = (t.note || '').replace(/"/g, '""');
-
-            csv += `"${d.id}","${dt}","${cust.name}","${cust.phone}","${type}",${debit},${credit},"${note}"\n`;
-          });
-
-          csv += "\n\nCustomer Summary\nCustomer Name,Phone,Current Balance,Status\n";
-          custSnap.docs.forEach(d => {
-            const c = d.data();
-            const status = c.balance >= 0 ? "You Will Get" : "You Will Give";
-            csv += `"${c.name}","${c.phone}",${Math.abs(c.balance || 0)},"${status}"\n`;
-          });
-
-          const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement("a");
-          a.href = url;
-          a.download = `GG_DigiBook_Ledger_${dateStr}.csv`;
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          URL.revokeObjectURL(url);
-
-        } else if (choice === "2") {
-          const backupData = {
-            exportDate: new Date().toISOString(),
-            user: currentUser.email,
-            totalCustomers: custSnap.docs.length,
-            totalTransactions: txSnap.docs.length,
-            customers: custSnap.docs.map(d => ({ id: d.id, ...d.data() })),
-            transactions: txSnap.docs.map(d => ({ id: d.id, ...d.data() }))
-          };
-
-          const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: "application/json" });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement("a");
-          a.href = url;
-          a.download = `GG_DigiBook_Backup_${dateStr}.json`;
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          URL.revokeObjectURL(url);
-        }
-      } catch (err) {
-        alert("Backup failed: " + err.message);
-      }
-    };
-
-    // IMPORT / RESTORE DATA FEATURE (Transfer data between accounts)
-    window.triggerImportBackup = () => {
-      playSound('tap');
-      document.getElementById('import-json-input').click();
-    };
-
-    window.handleImportBackupFile = async (event) => {
-      const file = event.target.files[0];
-      if (!file) return;
-
-      const confirmRestore = confirm("Are you sure you want to import this ledger backup into your current account? Data will be synced safely.");
-      if (!confirmRestore) {
-        event.target.value = "";
-        return;
-      }
-
-      playSound('tap');
-      const reader = new FileReader();
-      reader.onload = async (e) => {
-        try {
-          const imported = JSON.parse(e.target.result);
-          if (!imported.customers || !imported.transactions) {
-            throw new Error("Invalid backup format. Please select an authentic GG Digi Book JSON backup.");
-          }
-
-          const customerIdMap = {};
-          // 1. Restore Customers under Current User
-          for (const cust of imported.customers) {
-            const newCustRef = await addDoc(collection(db, "customers"), {
-              userId: currentUser.uid,
-              name: cust.name || "Customer",
-              phone: cust.phone || "",
-              balance: cust.balance || 0,
-              createdAt: cust.createdAt || new Date().toISOString()
-            });
-            customerIdMap[cust.id] = newCustRef.id;
-          }
-
-          // 2. Restore Transactions mapped to new customers
-          for (const tx of imported.transactions) {
-            const mappedCustomerId = customerIdMap[tx.customerId] || tx.customerId;
-            await addDoc(collection(db, "transactions"), {
-              userId: currentUser.uid,
-              customerId: mappedCustomerId,
-              type: tx.type || "diye",
-              amount: tx.amount || 0,
-              note: tx.note || "",
-              receiptImage: tx.receiptImage || "",
-              createdAt: tx.createdAt || new Date().toISOString()
-            });
-          }
-
-          playSound('success');
-          alert(`Successfully imported ${imported.customers.length} customers and ${imported.transactions.length} transactions to your account!`);
-          event.target.value = "";
-        } catch (err) {
-          alert("Import Error: " + err.message);
-          event.target.value = "";
-        }
-      };
-      reader.readAsText(file);
-    };
   </script>
 </head>
 <body class="bg-slate-50 min-h-screen text-slate-800 antialiased selection:bg-emerald-500 selection:text-white">
@@ -916,7 +1031,7 @@
       </div>
     </div>
 
-    <!-- PAGE 2: GALLA CASH & ACCOUNTS CROSS-CHECK -->
+    <!-- PAGE 2: ACCOUNTS / GALLA ENTRY & RECONCILIATION -->
     <div id="view-accounts" class="hidden flex-1 p-4 pb-20 space-y-4 overflow-y-auto bg-slate-50/70">
       
       <!-- Top Overview Audit Banner -->
@@ -942,7 +1057,7 @@
           </div>
         </div>
 
-        <!-- Difference / Match Result -->
+        <!-- Difference Result -->
         <div class="bg-white p-3 rounded-2xl text-center space-y-1 shadow-inner">
           <p class="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">Farq (Difference)</p>
           <h2 id="audit-difference" class="text-2xl font-black text-slate-800 tracking-tight">Rs. 0</h2>
@@ -955,19 +1070,63 @@
       </div>
 
       <!-- Single Direct Cash in Galla Entry Box -->
-      <div class="bg-white p-5 rounded-3xl border border-slate-200/80 shadow-sm space-y-3">
-        <div>
-          <h4 class="text-xs font-extrabold text-slate-800 uppercase tracking-wider">Enter Physical Galla Cash</h4>
-          <p class="text-[11px] text-slate-400 mt-0.5">Apne galle me mojood kul raqam (Total Amount) yahan likhein:</p>
-        </div>
-
+      <div class="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm space-y-2">
+        <h4 class="text-xs font-extrabold text-slate-800 uppercase tracking-wider">Physical Galla Cash (Gin Kar Likhein)</h4>
         <div class="relative">
-          <span class="absolute left-3.5 top-3 text-slate-400 font-bold text-sm">Rs.</span>
-          <input type="number" id="single-galla-amount" oninput="calculateSingleGallaAudit()" placeholder="0" class="w-full pl-11 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-base font-black text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition">
+          <span class="absolute left-3.5 top-2.5 text-slate-400 font-bold text-sm">Rs.</span>
+          <input type="number" id="single-galla-amount" oninput="calculateSingleGallaAudit()" placeholder="0" class="w-full pl-11 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-base font-black text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition">
+        </div>
+      </div>
+
+      <!-- NEW FEATURE: GALLA ENTRY WITH ACCOUNT DEDUCTION/DEPOSIT -->
+      <div class="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm space-y-3">
+        <div class="flex items-center justify-between">
+          <h4 class="text-xs font-extrabold text-slate-800 uppercase tracking-wider">Galla Entry With Account Link</h4>
+          <span class="text-[10px] font-bold bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-md">Live Sync</span>
+        </div>
+        <p class="text-[11px] text-slate-400">Galle me paise aane ya jaane par party/account (Jazz, Zong, JazzCash) select karein:</p>
+
+        <!-- Account Selector -->
+        <div>
+          <label class="text-[10px] font-bold text-slate-500 block mb-1">Select Account / Party:</label>
+          <select id="galla-party-select" class="w-full text-xs font-bold p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:border-emerald-500 outline-none"></select>
         </div>
 
-        <div class="p-3 bg-emerald-50/60 rounded-xl border border-emerald-100 text-[11px] text-emerald-900">
-          💡 <strong>Tip:</strong> Notes alag alag gin'ny ki zaroorat nahi. Sirf gally ka total daalein aur check karein ke balance barabar hai ya koi farq hai.
+        <div class="grid grid-cols-2 gap-2">
+          <input type="number" id="galla-entry-amount" placeholder="Amount (Rs.)" class="w-full text-xs font-bold p-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-emerald-500">
+          <input type="text" id="galla-entry-note" placeholder="Description/Note" class="w-full text-xs p-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-emerald-500">
+        </div>
+
+        <!-- 2 Action Buttons -->
+        <div class="grid grid-cols-2 gap-2 pt-1">
+          <!-- CASH IN -->
+          <button onclick="processGallaAccountEntry('in')" class="py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-black rounded-xl shadow-md transition flex flex-col items-center">
+            <span>+ CASH IN (Aaya)</span>
+            <span class="text-[9px] font-normal text-emerald-100">Galla +, Account Minus</span>
+          </button>
+          <!-- CASH OUT -->
+          <button onclick="processGallaAccountEntry('out')" class="py-2.5 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white text-xs font-black rounded-xl shadow-md transition flex flex-col items-center">
+            <span>- CASH OUT (Gaya)</span>
+            <span class="text-[9px] font-normal text-rose-100">Galla -, Account Plus</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Recent Cash Book Entries Table -->
+      <div class="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm space-y-2">
+        <h4 class="text-xs font-extrabold text-slate-800 uppercase tracking-wider">Cash Book Activity (History)</h4>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse">
+            <thead>
+              <tr class="border-b border-slate-200 text-[10px] font-extrabold text-slate-400 uppercase">
+                <th class="p-2">Date</th>
+                <th class="p-2">Account</th>
+                <th class="p-2">Type</th>
+                <th class="p-2 text-right">Amount</th>
+              </tr>
+            </thead>
+            <tbody id="galla-history-tbody"></tbody>
+          </table>
         </div>
       </div>
 
@@ -1207,21 +1366,18 @@
       </div>
 
       <div class="grid grid-cols-3 gap-2 text-center pt-2">
-        <!-- Image Mode -->
         <button onclick="selectEntryMode('image')" class="p-3 rounded-2xl bg-orange-50 border border-orange-200/80 hover:bg-orange-100 transition flex flex-col items-center">
           <span class="text-2xl mb-1">📸</span>
           <span class="text-xs font-extrabold text-orange-900">Image</span>
           <span class="text-[9px] text-orange-700/80 mt-0.5">Scan / Bill</span>
         </button>
 
-        <!-- Voice Mode -->
         <button onclick="selectEntryMode('voice')" class="p-3 rounded-2xl bg-indigo-50 border border-indigo-200/80 hover:bg-indigo-100 transition flex flex-col items-center">
           <span class="text-2xl mb-1">🎙️</span>
           <span class="text-xs font-extrabold text-indigo-900">Voice</span>
           <span class="text-[9px] text-indigo-700/80 mt-0.5">Bol Kar Likhein</span>
         </button>
 
-        <!-- Manual Mode -->
         <button onclick="selectEntryMode('manual')" class="p-3 rounded-2xl bg-emerald-50 border border-emerald-200/80 hover:bg-emerald-100 transition flex flex-col items-center">
           <span class="text-2xl mb-1">⌨️</span>
           <span class="text-xs font-extrabold text-emerald-900">Manual</span>
