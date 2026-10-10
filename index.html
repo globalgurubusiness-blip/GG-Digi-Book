@@ -1,11 +1,13 @@
 <!DOCTYPE html>
+<!-- GG Khata - Complete Corrected Single-File Frontend v2.1 (11 Oct 2026) -->
 <html lang="en" dir="ltr">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>GG Digi Book - Digital Ledger</title>
+  <title>GG Khata - Digital Ledger</title>
+  <link rel="icon" type="image/png" href="logo.png">
   <script src="https://cdn.tailwindcss.com"></script>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
 
@@ -19,9 +21,13 @@
     import { 
       getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged 
     } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
-    import { 
-      getFirestore, collection, addDoc, onSnapshot, query, where, doc, setDoc, updateDoc, deleteDoc, getDocs 
+    import {
+      getFirestore, collection, addDoc, onSnapshot, query, where, doc, setDoc,
+      getDocs, getDoc, runTransaction, writeBatch
     } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+    import {
+      getStorage, ref as storageRef, uploadBytes, getDownloadURL
+    } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-storage.js";
 
     const firebaseConfig = {
       apiKey: "AIzaSyBnzL_AKXDZFE6feQJf5XnasBqcLey0uOs",
@@ -36,6 +42,7 @@
     const app = initializeApp(firebaseConfig);
     const auth = getAuth(app);
     const db = getFirestore(app);
+    const storage = getStorage(app);
     const provider = new GoogleAuthProvider();
 
     let currentUser = null;
@@ -44,19 +51,18 @@
     let selectedCustomer = null;
     let currentTransactions = [];
     let unsubscribeTx = null;
-    let attachedPhotoBase64 = "";
+    let unsubscribeCustomers = null;
+    let unsubscribeAllTx = null;
+    let unsubscribeGallaMeta = null;
+    let attachedPhotoBlob = null;
+    let attachedPhotoPreviewUrl = "";
     let gallaTxHistory = [];
 
-    let baseInitialOpening = 0;
-    let gallaDayOpening = 0;
-    let gallaTotalIn = 0;
-    let gallaTotalOut = 0;
+    let gallaOpeningBalance = 0;
+    let gallaTodayIn = 0;
+    let gallaTodayOut = 0;
     let gallaClosingCash = 0;
-
-    function getTodayDateStr() {
-      const d = new Date();
-      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    }
+    let calculatedTodayOpening = 0;
 
     let cachedLogoBase64 = null;
     function loadLogoImage() {
@@ -183,13 +189,61 @@
       if (!cleaned) return 0;
       try {
         const result = Function(`'use strict'; return (${cleaned})`)();
-        return isNaN(result) ? 0 : Number(result);
+        const numberResult = Number(result);
+        return Number.isFinite(numberResult) ? numberResult : 0;
       } catch (e) {
         return 0;
       }
     };
 
+    function escapeHtml(value) {
+      return String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;');
+    }
+
+    function getPakistanDateKey(dateValue = new Date()) {
+      const date = dateValue instanceof Date ? dateValue : new Date(dateValue);
+      if (Number.isNaN(date.getTime())) return '';
+      const parts = new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Asia/Karachi', year: 'numeric', month: '2-digit', day: '2-digit'
+      }).formatToParts(date);
+      const values = Object.fromEntries(parts.map(p => [p.type, p.value]));
+      return `${values.year}-${values.month}-${values.day}`;
+    }
+
+    function formatPakistanDateTime(dateValue, includeTime = true) {
+      const date = new Date(dateValue);
+      if (Number.isNaN(date.getTime())) return 'Date unavailable';
+      return new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Asia/Karachi',
+        day: '2-digit', month: 'short', year: 'numeric',
+        ...(includeTime ? { hour: '2-digit', minute: '2-digit', hour12: true } : {})
+      }).format(date);
+    }
+
+    function toTitleCase(str) {
+      if (!str) return '';
+      return str.replace(/\w\S*/g, (txt) => txt.charAt(0).toUpperCase() + txt.substr(1).toLowerCase());
+    }
+
+    function getTodayDateString() {
+      return getPakistanDateKey(new Date());
+    }
+
+    function cleanupRealtimeListeners() {
+      if (unsubscribeCustomers) unsubscribeCustomers();
+      if (unsubscribeAllTx) unsubscribeAllTx();
+      if (unsubscribeGallaMeta) unsubscribeGallaMeta();
+      if (unsubscribeTx) unsubscribeTx();
+      unsubscribeCustomers = unsubscribeAllTx = unsubscribeGallaMeta = unsubscribeTx = null;
+    }
+
     onAuthStateChanged(auth, (user) => {
+      cleanupRealtimeListeners();
       currentUser = user;
       if (user) {
         document.getElementById('login-screen').classList.add('hidden');
@@ -206,6 +260,10 @@
         listenAllTransactions();
         listenGallaMetadata();
       } else {
+        selectedCustomer = null;
+        customersList = [];
+        currentTransactions = [];
+        gallaTxHistory = [];
         document.getElementById('login-screen').classList.remove('hidden');
         document.getElementById('app-screen').classList.add('hidden');
       }
@@ -218,6 +276,7 @@
 
     window.logout = () => {
       playSound('tap');
+      cleanupRealtimeListeners();
       signOut(auth);
     };
 
@@ -262,7 +321,7 @@
         tabAccountsBtn.className = activeMob;
         if (dTabAccountsBtn) dTabAccountsBtn.className = activeDesk;
         populateAccountSelectDropdown();
-        recalculateDailyGallaFlow();
+        recalculateGallaStrip();
       } else if (tab === 'settings') {
         settingsView.classList.remove('hidden');
         tabSettingsBtn.className = activeMob;
@@ -272,7 +331,7 @@
 
     function loadCustomers() {
       const q = query(collection(db, "customers"), where("userId", "==", currentUser.uid));
-      onSnapshot(q, (snapshot) => {
+      unsubscribeCustomers = onSnapshot(q, (snapshot) => {
         customersList = [];
         let totalReceivable = 0;
         let totalPayable = 0;
@@ -324,89 +383,89 @@
 
     function listenGallaMetadata() {
       const metaRef = doc(db, "galla_meta", currentUser.uid);
-      onSnapshot(metaRef, (docSnap) => {
+      unsubscribeGallaMeta = onSnapshot(metaRef, (docSnap) => {
         if (docSnap.exists()) {
           const data = docSnap.data();
-          baseInitialOpening = Number(data.openingBalance || 0);
+          gallaOpeningBalance = Number(data.openingBalance || 0);
         } else {
-          baseInitialOpening = 0;
+          gallaOpeningBalance = 0;
         }
-        recalculateDailyGallaFlow();
+        recalculateGallaFromHistory();
       });
+    }
+
+    function recalculateGallaFromHistory() {
+      let pastTotalIn = 0;
+      let pastTotalOut = 0;
+      let todayIn = 0;
+      let todayOut = 0;
+      const todayStr = getTodayDateString();
+
+      gallaTxHistory.forEach(data => {
+        const amount = Number(data.amount || 0);
+        const txDate = data.createdAt ? getPakistanDateKey(data.createdAt) : todayStr;
+        const action = data.gallaAction || (data.type === 'liye' ? 'in' : 'out');
+        if (txDate === todayStr) {
+          if (action === 'in') todayIn += amount;
+          else if (action === 'out') todayOut += amount;
+        } else if (txDate < todayStr) {
+          if (action === 'in') pastTotalIn += amount;
+          else if (action === 'out') pastTotalOut += amount;
+        }
+      });
+
+      calculatedTodayOpening = gallaOpeningBalance + pastTotalIn - pastTotalOut;
+      gallaTodayIn = todayIn;
+      gallaTodayOut = todayOut;
+      gallaClosingCash = calculatedTodayOpening + todayIn - todayOut;
+      recalculateGallaStrip();
     }
 
     function listenAllTransactions() {
       const q = query(collection(db, "transactions"), where("userId", "==", currentUser.uid));
-      onSnapshot(q, (snapshot) => {
+      unsubscribeAllTx = onSnapshot(q, (snapshot) => {
         gallaTxHistory = [];
 
         snapshot.forEach(docSnap => {
           const data = { id: docSnap.id, ...docSnap.data() };
+
           if (data.isGallaEntry === true) {
             gallaTxHistory.push(data);
           }
         });
 
+        recalculateGallaFromHistory();
+
         gallaTxHistory.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-        recalculateDailyGallaFlow();
         renderGallaTransactionsTable();
       });
     }
 
-    // AUTOMATED DAILY CUTOFF & OPENING SHIFT
-    function recalculateDailyGallaFlow() {
-      const todayStr = getTodayDateStr();
-
-      let priorCashIn = 0;
-      let priorCashOut = 0;
-      let todayIn = 0;
-      let todayOut = 0;
-
-      gallaTxHistory.forEach(t => {
-        const amt = Number(t.amount || 0);
-        const tDate = (t.createdAt || "").slice(0, 10);
-        const isCashIn = (t.gallaAction === 'in') || (t.type === 'liye');
-        const isCashOut = (t.gallaAction === 'out') || (t.type === 'diye');
-
-        if (tDate === todayStr) {
-          if (isCashIn) todayIn += amt;
-          else if (isCashOut) todayOut += amt;
-        } else if (tDate < todayStr) {
-          if (isCashIn) priorCashIn += amt;
-          else if (isCashOut) priorCashOut += amt;
-        }
-      });
-
-      // Yesterday's closing automatically becomes today's morning opening
-      gallaDayOpening = baseInitialOpening + priorCashIn - priorCashOut;
-      gallaTotalIn = todayIn;
-      gallaTotalOut = todayOut;
-      gallaClosingCash = gallaDayOpening + gallaTotalIn - gallaTotalOut;
-
+    function recalculateGallaStrip() {
       const opEl = document.getElementById('galla-strip-opening');
       const inEl = document.getElementById('galla-strip-in');
       const outEl = document.getElementById('galla-strip-out');
       const closeEl = document.getElementById('galla-strip-closing');
 
-      if (opEl) opEl.innerText = `Rs. ${gallaDayOpening.toLocaleString()}`;
-      if (inEl) inEl.innerText = `Rs. ${gallaTotalIn.toLocaleString()}`;
-      if (outEl) outEl.innerText = `Rs. ${gallaTotalOut.toLocaleString()}`;
+      if (opEl) opEl.innerText = `Rs. ${calculatedTodayOpening.toLocaleString()}`;
+      if (inEl) inEl.innerText = `Rs. ${gallaTodayIn.toLocaleString()}`;
+      if (outEl) outEl.innerText = `Rs. ${gallaTodayOut.toLocaleString()}`;
       if (closeEl) closeEl.innerText = `Rs. ${gallaClosingCash.toLocaleString()}`;
 
-      const fIn = document.getElementById('footer-total-in');
-      const fOut = document.getElementById('footer-total-out');
+      const fFlow = document.getElementById('footer-today-flow');
+      const fDayNet = document.getElementById('footer-day-net');
       const fNet = document.getElementById('footer-grand-closing');
-      if (fIn) fIn.innerText = `+ Rs. ${gallaTotalIn.toLocaleString()}`;
-      if (fOut) fOut.innerText = `- Rs. ${gallaTotalOut.toLocaleString()}`;
-      if (fNet) fNet.innerText = `Rs. ${gallaClosingCash.toLocaleString()}`;
+      if (fFlow) fFlow.innerText = `In: Rs. ${gallaTodayIn.toLocaleString()} | Out: Rs. ${gallaTodayOut.toLocaleString()}`;
+      if (fDayNet) fDayNet.innerText = `Day Net: Rs. ${(gallaTodayIn - gallaTodayOut).toLocaleString()}`;
+      if (fNet) fNet.innerText = `Closing: Rs. ${gallaClosingCash.toLocaleString()}`;
     }
 
     window.editOpeningBalance = async () => {
       playSound('tap');
-      const val = prompt("Apna Base Opening Balance likhein (e.g. Starting Cash):", baseInitialOpening);
+      const val = prompt("Apna Initial Galla Base Opening Balance likhein:", gallaOpeningBalance);
       if (val === null) return;
       const num = evaluateExpression(val);
-      if (isNaN(num)) {
+      if (!Number.isFinite(num)) {
         alert("Please enter a valid number!");
         return;
       }
@@ -458,11 +517,11 @@
         item.innerHTML = `
           <div class="flex items-center gap-3">
             <div class="w-10 h-10 rounded-full bg-emerald-100 text-emerald-800 flex items-center justify-center font-bold text-sm shadow-inner">
-              ${firstLetter}
+              ${escapeHtml(firstLetter)}
             </div>
             <div>
-              <h4 class="font-bold text-gray-900 text-sm leading-tight">${cust.name}</h4>
-              <p class="text-[11px] text-gray-400 font-medium mt-0.5">${cust.phone || 'No phone number'}</p>
+              <h4 class="font-bold text-gray-900 text-sm leading-tight">${escapeHtml(toTitleCase(cust.name))}</h4>
+              <p class="text-[11px] text-gray-400 font-medium mt-0.5">${escapeHtml(cust.phone || 'No phone number')}</p>
             </div>
           </div>
           <div class="text-right">
@@ -485,7 +544,7 @@
       customersList.forEach(c => {
         const opt = document.createElement('option');
         opt.value = c.id;
-        opt.innerText = `${c.name} (Balance: Rs. ${Number(c.balance || 0).toLocaleString()})`;
+        opt.innerText = `${toTitleCase(c.name)} (Balance: Rs. ${Number(c.balance || 0).toLocaleString()})`;
         select.appendChild(opt);
       });
     }
@@ -543,7 +602,7 @@
       const statusText = bal > 0 ? 'You Will Get' : bal < 0 ? 'You Will Give' : 'Settled';
       const balClass = `text-xs font-bold px-2.5 py-1 rounded-md inline-block ${bal > 0 ? 'bg-rose-50 text-rose-600' : bal < 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-gray-100 text-gray-600'}`;
 
-      document.getElementById('modal-cust-name').innerText = selectedCustomer.name;
+      document.getElementById('modal-cust-name').innerText = toTitleCase(selectedCustomer.name);
       document.getElementById('modal-cust-phone').innerText = selectedCustomer.phone || 'No phone available';
       const mBalEl = document.getElementById('modal-cust-balance');
       mBalEl.innerText = `Rs. ${Math.abs(bal).toLocaleString()} (${statusText})`;
@@ -554,7 +613,7 @@
       if (dPlaceholder && dDetailPane) {
         dPlaceholder.classList.add('hidden');
         dDetailPane.classList.remove('hidden');
-        document.getElementById('d-cust-name').innerText = selectedCustomer.name;
+        document.getElementById('d-cust-name').innerText = toTitleCase(selectedCustomer.name);
         document.getElementById('d-cust-phone').innerText = selectedCustomer.phone || 'No phone available';
         const dBalEl = document.getElementById('d-cust-balance');
         dBalEl.innerText = `Rs. ${Math.abs(bal).toLocaleString()} (${statusText})`;
@@ -571,7 +630,11 @@
 
       if (unsubscribeTx) unsubscribeTx();
 
-      const q = query(collection(db, "transactions"), where("customerId", "==", customerId));
+      const q = query(
+        collection(db, "transactions"),
+        where("userId", "==", currentUser.uid),
+        where("customerId", "==", customerId)
+      );
       unsubscribeTx = onSnapshot(q, (snapshot) => {
         currentTransactions = [];
         snapshot.forEach(docSnap => currentTransactions.push({ id: docSnap.id, ...docSnap.data() }));
@@ -584,27 +647,46 @@
       const txListEl = document.getElementById('tx-history-list');
       const dTxListEl = document.getElementById('d-tx-history-list');
 
-      const renderHtml = (isDesktop = false) => {
+      const chronologicalTx = [...currentTransactions].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+      let running = 0;
+      const txWithBalMap = {};
+
+      chronologicalTx.forEach(t => {
+        const amt = Number(t.amount || 0);
+        const isGiven = (t.type === 'diye');
+        running += isGiven ? amt : -amt;
+        txWithBalMap[t.id] = running;
+      });
+
+      const renderHtml = () => {
         if (currentTransactions.length === 0) {
           return '<p class="text-xs text-gray-400 text-center py-8">No transactions recorded yet.</p>';
         }
         return currentTransactions.map(t => {
-          const dateStr = new Date(t.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+          const dateStr = formatPakistanDateTime(t.createdAt, true);
           const isGiven = t.type === 'diye';
-          const photoIcon = t.receiptImage ? `<button onclick="window.viewImage('${t.receiptImage}')" class="text-[10px] bg-white border border-gray-200 px-2 py-0.5 rounded-md font-bold text-gray-700 shadow-sm ml-2">📷 Bill</button>` : '';
+          const balAfterThis = txWithBalMap[t.id] !== undefined ? txWithBalMap[t.id] : 0;
+          const isRec = balAfterThis >= 0;
+          const receiptSource = t.receiptImageUrl || t.receiptImage || '';
+          const photoIcon = receiptSource
+            ? `<button onclick="window.viewTransactionImage('${escapeHtml(t.id)}')" class="text-[10px] bg-white border border-gray-200 px-2 py-0.5 rounded-md font-bold text-gray-700 shadow-sm ml-2">📷 Bill</button>`
+            : '';
 
           return `
             <div class="flex justify-between items-center p-3 rounded-xl bg-gray-50/70 border border-gray-100 hover:bg-slate-50 transition">
               <div>
                 <div class="flex items-center">
-                  <span class="font-bold text-gray-800 text-xs">${t.note || (isGiven ? 'Given (Debit)' : 'Received (Credit)')}</span>
+                  <span class="font-bold text-gray-800 text-xs">${escapeHtml(t.note || (isGiven ? 'Given (Debit)' : 'Received (Credit)'))}</span>
                   ${photoIcon}
                 </div>
                 <p class="text-[10px] text-gray-400 mt-0.5">${dateStr}</p>
               </div>
               <div class="text-right">
-                <span class="font-extrabold text-xs ${isGiven ? 'text-rose-600' : 'text-emerald-600'}">
+                <span class="font-extrabold text-xs ${isGiven ? 'text-rose-600' : 'text-emerald-600'} block">
                   ${isGiven ? '-' : '+'} Rs. ${Number(t.amount).toLocaleString()}
+                </span>
+                <span class="text-[9px] font-bold ${isRec ? 'text-rose-500' : 'text-emerald-600'} bg-white px-2 py-0.5 rounded-md border border-slate-100 shadow-xs inline-block mt-1">
+                  Bal: Rs. ${Math.abs(balAfterThis).toLocaleString()} ${isRec ? '(Rec)' : '(Pay)'}
                 </span>
               </div>
             </div>
@@ -612,8 +694,8 @@
         }).join('');
       };
 
-      if (txListEl) txListEl.innerHTML = renderHtml(false);
-      if (dTxListEl) dTxListEl.innerHTML = renderHtml(true);
+      if (txListEl) txListEl.innerHTML = renderHtml();
+      if (dTxListEl) dTxListEl.innerHTML = renderHtml();
     }
 
     window.closeModal = () => {
@@ -625,9 +707,10 @@
       if (event.key === 'Enter') {
         event.preventDefault();
         const inputId = isDesktop ? 'd-tx-amount' : 'tx-amount';
-        const calculated = evaluateExpression(event.target.value);
+        const el = document.getElementById(inputId);
+        const calculated = evaluateExpression(el.value);
         if (calculated > 0) {
-          event.target.value = calculated;
+          el.value = calculated;
         }
         addTransaction(type, isDesktop);
       }
@@ -644,7 +727,6 @@
       }
     };
 
-    // KHATA ENTRY: Customer ledger balance only
     window.addTransaction = async (type, isDesktop = false) => {
       const amountInput = document.getElementById(isDesktop ? 'd-tx-amount' : 'tx-amount');
       const noteInput = document.getElementById(isDesktop ? 'd-tx-note' : 'tx-note');
@@ -658,24 +740,38 @@
       amountInput.value = evaluated;
       playSound(type === 'diye' ? 'debit' : 'credit');
 
-      const balanceDiff = (type === 'diye') ? evaluated : -evaluated;
-      const newBal = (selectedCustomer.balance || 0) + balanceDiff;
-
       try {
-        await updateDoc(doc(db, "customers", selectedCustomer.id), { balance: newBal });
-        await addDoc(collection(db, "transactions"), {
-          userId: currentUser.uid,
-          customerId: selectedCustomer.id,
-          customerName: selectedCustomer.name,
-          type: type,
-          amount: evaluated,
-          note: noteInput.value.trim(),
-          isGallaEntry: false,
-          receiptImage: attachedPhotoBase64 || "",
-          createdAt: new Date().toISOString()
+        const customerId = selectedCustomer.id;
+        const customerName = selectedCustomer.name;
+        const receiptImageUrl = await uploadAttachedReceipt();
+        let committedBalance = 0;
+
+        await runTransaction(db, async (firestoreTransaction) => {
+          const customerRef = doc(db, "customers", customerId);
+          const customerSnap = await firestoreTransaction.get(customerRef);
+          if (!customerSnap.exists()) throw new Error('Customer account no longer exists.');
+          if (customerSnap.data().userId !== currentUser.uid) throw new Error('Unauthorized customer account.');
+
+          const latestBalance = Number(customerSnap.data().balance || 0);
+          const balanceDiff = type === 'diye' ? evaluated : -evaluated;
+          committedBalance = latestBalance + balanceDiff;
+          const txRef = doc(collection(db, "transactions"));
+
+          firestoreTransaction.update(customerRef, { balance: committedBalance });
+          firestoreTransaction.set(txRef, {
+            userId: currentUser.uid,
+            customerId,
+            customerName,
+            type,
+            amount: evaluated,
+            note: noteInput.value.trim(),
+            isGallaEntry: false,
+            receiptImageUrl,
+            createdAt: new Date().toISOString()
+          });
         });
 
-        selectedCustomer.balance = newBal;
+        selectedCustomer.balance = committedBalance;
         updateCustomerDetailUI();
         amountInput.value = '';
         noteInput.value = '';
@@ -686,7 +782,6 @@
       }
     };
 
-    // GALLA CASH ENTRY: Updates live daily cash
     window.processGallaAccountEntry = async (actionType) => {
       const partySelect = document.getElementById('galla-party-select');
       const amountInput = document.getElementById('galla-entry-amount');
@@ -710,33 +805,49 @@
         playSound('debit');
       }
 
-      let txTypeForParty = actionType === 'in' ? 'liye' : 'diye';
-      if (partyObj) {
-        const partyBalanceDiff = actionType === 'in' ? -evaluated : evaluated;
-        const newPartyBalance = (partyObj.balance || 0) + partyBalanceDiff;
-        try {
-          await updateDoc(doc(db, "customers", partyObj.id), { balance: newPartyBalance });
-        } catch (e) {
-          console.warn("Could not update customer balance", e);
-        }
-      }
+      const txTypeForParty = actionType === 'in' ? 'liye' : 'diye';
 
       const defaultNote = partyObj 
-        ? (actionType === 'in' ? `Cash In from ${partyObj.name}` : `Cash Out to ${partyObj.name}`)
+        ? (actionType === 'in' ? `Cash In from ${toTitleCase(partyObj.name)}` : `Cash Out to ${toTitleCase(partyObj.name)}`)
         : (actionType === 'in' ? `Counter Cash In` : `Counter Cash Out`);
 
       try {
-        await addDoc(collection(db, "transactions"), {
-          userId: currentUser.uid,
-          customerId: partyObj ? partyObj.id : "direct_cash",
-          customerName: partyObj ? partyObj.name : "Direct Cash",
-          type: txTypeForParty,
-          amount: evaluated,
-          note: note || defaultNote,
-          isGallaEntry: true,
-          gallaAction: actionType,
-          createdAt: new Date().toISOString()
-        });
+        if (partyObj) {
+          await runTransaction(db, async (firestoreTransaction) => {
+            const customerRef = doc(db, "customers", partyObj.id);
+            const customerSnap = await firestoreTransaction.get(customerRef);
+            if (!customerSnap.exists()) throw new Error('Selected party no longer exists.');
+            if (customerSnap.data().userId !== currentUser.uid) throw new Error('Unauthorized party account.');
+
+            const latestBalance = Number(customerSnap.data().balance || 0);
+            const partyBalanceDiff = actionType === 'in' ? -evaluated : evaluated;
+            const txRef = doc(collection(db, "transactions"));
+            firestoreTransaction.update(customerRef, { balance: latestBalance + partyBalanceDiff });
+            firestoreTransaction.set(txRef, {
+              userId: currentUser.uid,
+              customerId: partyObj.id,
+              customerName: partyObj.name,
+              type: txTypeForParty,
+              amount: evaluated,
+              note: note || defaultNote,
+              isGallaEntry: true,
+              gallaAction: actionType,
+              createdAt: new Date().toISOString()
+            });
+          });
+        } else {
+          await addDoc(collection(db, "transactions"), {
+            userId: currentUser.uid,
+            customerId: "direct_cash",
+            customerName: "Direct Cash",
+            type: txTypeForParty,
+            amount: evaluated,
+            note: note || defaultNote,
+            isGallaEntry: true,
+            gallaAction: actionType,
+            createdAt: new Date().toISOString()
+          });
+        }
 
         amountInput.value = '';
         noteInput.value = '';
@@ -753,26 +864,43 @@
       listEl.innerHTML = '';
 
       if (gallaTxHistory.length === 0) {
-        listEl.innerHTML = '<tr><td colspan="4" class="p-4 text-center text-xs text-slate-400">No cash entries recorded yet.</td></tr>';
+        listEl.innerHTML = '<tr><td colspan="6" class="p-6 text-center text-xs text-slate-400">No cash entries recorded yet.</td></tr>';
         return;
       }
 
-      gallaTxHistory.slice(0, 30).forEach(t => {
-        const row = document.createElement('tr');
-        row.className = "border-b border-slate-100 hover:bg-slate-50 text-xs";
+      const chronological = [...gallaTxHistory].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+      let running = gallaOpeningBalance;
+      const runningMap = {};
+
+      chronological.forEach(t => {
         const isCashIn = (t.gallaAction === 'in') || (t.type === 'liye');
-        const dateStr = new Date(t.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+        const amt = Number(t.amount || 0);
+        running += isCashIn ? amt : -amt;
+        runningMap[t.id] = running;
+      });
+
+      gallaTxHistory.slice(0, 60).forEach(t => {
+        const row = document.createElement('tr');
+        row.className = "border-b border-slate-100 hover:bg-slate-50/80 transition text-xs";
+        const isCashIn = (t.gallaAction === 'in') || (t.type === 'liye');
+        const dateStr = formatPakistanDateTime(t.createdAt, true);
+        const entryBal = runningMap[t.id] !== undefined ? runningMap[t.id] : 0;
+        const formattedAccountName = toTitleCase(t.customerName || 'Direct Cash');
 
         row.innerHTML = `
-          <td class="p-2.5 text-slate-500 font-medium">${dateStr}</td>
-          <td class="p-2.5 font-bold text-slate-800">${t.customerName || 'Direct Cash'}</td>
-          <td class="p-2.5">
-            <span class="px-2 py-0.5 rounded-md text-[10px] font-black ${isCashIn ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}">
+          <td class="p-3 text-slate-500 font-semibold whitespace-nowrap">${escapeHtml(dateStr)}</td>
+          <td class="p-3 font-bold text-slate-800 whitespace-nowrap">${escapeHtml(formattedAccountName)}</td>
+          <td class="p-3 whitespace-nowrap text-center">
+            <span class="px-2.5 py-1 rounded-md text-[10px] font-black tracking-wide ${isCashIn ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}">
               ${isCashIn ? 'CASH IN' : 'CASH OUT'}
             </span>
           </td>
-          <td class="p-2.5 text-right font-black ${isCashIn ? 'text-emerald-600' : 'text-rose-600'}">
+          <td class="p-3 text-slate-600 font-medium max-w-[220px] truncate" title="${escapeHtml(t.note || '-')}">${escapeHtml(t.note || '-')}</td>
+          <td class="p-3 text-right font-black whitespace-nowrap ${isCashIn ? 'text-emerald-600' : 'text-rose-600'}">
             ${isCashIn ? '+' : '-'} Rs. ${Number(t.amount).toLocaleString()}
+          </td>
+          <td class="p-3 text-right font-black whitespace-nowrap text-slate-900 bg-slate-50/70">
+            Rs. ${entryBal.toLocaleString()}
           </td>
         `;
         listEl.appendChild(row);
@@ -783,7 +911,7 @@
       const pageHeight = doc.internal.pageSize.height || doc.internal.pageSize.getHeight();
       const pageWidth = doc.internal.pageSize.width || doc.internal.pageSize.getWidth();
 
-      const text = "GG Digi Book • Powered by Global Guru";
+      const text = "GG Khata • Powered by Global Guru";
       doc.setFontSize(8);
       doc.setTextColor(148, 163, 184);
       doc.setFont(undefined, 'bold');
@@ -801,7 +929,6 @@
       doc.text(text, startX + iconSize + spacing, bottomY);
     }
 
-    // 1. Galla Cash Book Statement PDF
     window.downloadGallaPDF = () => {
       playSound('download');
       const { jsPDF } = window.jspdf;
@@ -813,41 +940,39 @@
       
       pdf.setFontSize(16);
       pdf.setTextColor(5, 150, 105);
-      pdf.text("GG Digi Book - Galla Cash Book Statement", 32, 20);
+      pdf.text("GG Khata - Galla Cash Book Statement", 32, 20);
 
       pdf.setFontSize(9);
       pdf.setTextColor(100, 116, 139);
       pdf.text(`User Account: ${currentUser.email || 'Admin'}`, 32, 26);
-      pdf.text(`Generated On: ${new Date().toLocaleString('en-GB')}`, 32, 31);
+      pdf.text(`Generated On: ${formatPakistanDateTime(new Date().toISOString(), true)} PKT`, 32, 31);
 
       pdf.setFillColor(248, 250, 252);
       pdf.roundedRect(14, 36, 182, 15, 2, 2, 'F');
       pdf.setFontSize(8.5);
       pdf.setTextColor(30, 41, 59);
       pdf.setFont(undefined, 'bold');
-      pdf.text(`Day's Opening: Rs. ${gallaDayOpening.toLocaleString()}`, 18, 46);
+      pdf.text(`Day's Opening: Rs. ${calculatedTodayOpening.toLocaleString()}`, 18, 46);
       pdf.setTextColor(5, 150, 105);
-      pdf.text(`Today In: +Rs. ${gallaTotalIn.toLocaleString()}`, 65, 46);
+      pdf.text(`Today In: +Rs. ${gallaTodayIn.toLocaleString()}`, 65, 46);
       pdf.setTextColor(225, 29, 72);
-      pdf.text(`Today Out: -Rs. ${gallaTotalOut.toLocaleString()}`, 115, 46);
+      pdf.text(`Today Out: -Rs. ${gallaTodayOut.toLocaleString()}`, 115, 46);
       pdf.setTextColor(15, 23, 42);
       pdf.text(`Closing: Rs. ${gallaClosingCash.toLocaleString()}`, 155, 46);
 
       const sortedHistory = [...gallaTxHistory].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-      let currentRunning = baseInitialOpening;
+      let currentRunning = gallaOpeningBalance;
 
       const tableData = sortedHistory.map(t => {
         const isCashIn = (t.gallaAction === 'in') || (t.type === 'liye');
         const amt = Number(t.amount || 0);
         currentRunning += isCashIn ? amt : -amt;
 
-        const dateStr = new Date(t.createdAt).toLocaleDateString('en-GB', { 
-          day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' 
-        });
+        const dateStr = formatPakistanDateTime(t.createdAt, true);
 
         return [
           dateStr,
-          t.customerName || 'Direct Cash',
+          toTitleCase(t.customerName || 'Direct Cash'),
           isCashIn ? 'CASH IN (+)' : 'CASH OUT (-)',
           t.note || '-',
           `${isCashIn ? '+' : '-'} Rs. ${amt.toLocaleString()}`,
@@ -855,20 +980,22 @@
         ];
       });
 
+      const dayNet = gallaTodayIn - gallaTodayOut;
+
       const footRow = [
         [
           'GRAND TOTAL (MEEZAN)',
-          `Total Entries: ${sortedHistory.length}`,
+          `Entries: ${sortedHistory.length}`,
           'TODAY FLOW',
-          `In: Rs. ${gallaTotalIn.toLocaleString()} | Out: Rs. ${gallaTotalOut.toLocaleString()}`,
-          `Day Net: Rs. ${(gallaTotalIn - gallaTotalOut).toLocaleString()}`,
+          `In: Rs. ${gallaTodayIn.toLocaleString()} | Out: Rs. ${gallaTodayOut.toLocaleString()}`,
+          `Day Net: Rs. ${dayNet.toLocaleString()}`,
           `Closing: Rs. ${gallaClosingCash.toLocaleString()}`
         ]
       ];
 
       pdf.autoTable({
         startY: 55,
-        head: [['Date & Time', 'Account / Party', 'Type', 'Description / Note', 'Amount', 'Balance']],
+        head: [['Date & Time', 'Account / Party', 'Type', 'Note', 'Amount', 'Balance']],
         body: tableData,
         foot: footRow,
         theme: 'striped',
@@ -884,10 +1011,9 @@
         }
       });
 
-      pdf.save(`GG_Galla_Statement_${new Date().toISOString().slice(0, 10)}.pdf`);
+      pdf.save(`GG_Galla_Statement_${getTodayDateString()}.pdf`);
     };
 
-    // 2. Customer Ledger Statement PDF
     window.downloadPDF = () => {
       playSound('download');
       const { jsPDF } = window.jspdf;
@@ -899,12 +1025,12 @@
 
       pdf.setFontSize(16);
       pdf.setTextColor(5, 150, 105);
-      pdf.text("GG Digi Book - Ledger Statement", 32, 20);
+      pdf.text("GG Khata - Ledger Statement", 32, 20);
 
       pdf.setFontSize(9);
       pdf.setTextColor(100, 116, 139);
-      pdf.text(`Customer Name: ${selectedCustomer.name}`, 32, 26);
-      pdf.text(`Phone: ${selectedCustomer.phone || 'N/A'}  |  Date: ${new Date().toLocaleDateString('en-GB')}`, 32, 31);
+      pdf.text(`Customer Name: ${toTitleCase(selectedCustomer.name)}`, 32, 26);
+      pdf.text(`Phone: ${selectedCustomer.phone || 'N/A'}  |  Date: ${getTodayDateString()}`, 32, 31);
 
       const balStatus = selectedCustomer.balance >= 0 ? 'Receivable' : 'Payable';
       const balText = `Current Balance: Rs. ${Math.abs(selectedCustomer.balance || 0).toLocaleString()} (${balStatus})`;
@@ -924,11 +1050,8 @@
         runningBal += isGiven ? amt : -amt;
 
         let noteText = t.note || (isGiven ? 'Given (Debit)' : 'Received (Credit)');
-        if (!/^[\x00-\x7F]*$/.test(noteText)) {
-          noteText = isGiven ? 'Given (Debit)' : 'Received (Credit)';
-        }
         return [
-          new Date(t.createdAt).toLocaleDateString('en-GB'),
+          formatPakistanDateTime(t.createdAt, false),
           noteText,
           isGiven ? `Rs. ${amt.toLocaleString()}` : '-',
           !isGiven ? `Rs. ${amt.toLocaleString()}` : '-',
@@ -966,10 +1089,7 @@
     window.downloadBackup = async () => {
       playSound('tap');
       const choice = prompt("Select Backup Format:\n1 = Excel Sheet (.CSV)\n2 = JSON Backup (.JSON - For Shifting Account)\n\nType 1 or 2 below:", "1");
-      
-      if (!choice || (choice !== "1" && choice !== "2")) {
-        return;
-      }
+      if (!choice || (choice !== "1" && choice !== "2")) return;
 
       playSound('download');
       try {
@@ -981,16 +1101,13 @@
           getDocs(qTx)
         ]);
 
-        const dateStr = new Date().toISOString().slice(0, 10);
+        const dateStr = getTodayDateString();
 
         if (choice === "1") {
           const customersMap = {};
-          custSnap.docs.forEach(d => {
-            customersMap[d.id] = d.data();
-          });
+          custSnap.docs.forEach(d => { customersMap[d.id] = d.data(); });
 
           let csv = "Transaction ID,Date,Customer Name,Phone,Type,Given Debit,Received Credit,Note\n";
-
           txSnap.docs.forEach(d => {
             const t = d.data();
             const cust = customersMap[t.customerId] || { name: "Unknown", phone: "" };
@@ -999,7 +1116,6 @@
             const debit = t.type === 'diye' ? t.amount : 0;
             const credit = t.type === 'liye' ? t.amount : 0;
             const note = (t.note || '').replace(/"/g, '""');
-
             csv += `"${d.id}","${dt}","${cust.name}","${cust.phone}","${type}",${debit},${credit},"${note}"\n`;
           });
 
@@ -1010,13 +1126,13 @@
             csv += `"${c.name}","${c.phone}",${Math.abs(c.balance || 0)},"${status}"\n`;
           });
 
-          csv += `\n"GG Digi Book • Powered by Global Guru","","","","","","",""\n`;
+          csv += `\n"GG Khata • Powered by Global Guru","","","","","","",""\n`;
 
           const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
           const url = URL.createObjectURL(blob);
           const a = document.createElement("a");
           a.href = url;
-          a.download = `GG_DigiBook_Ledger_${dateStr}.csv`;
+          a.download = `GG_Khata_Ledger_${dateStr}.csv`;
           document.body.appendChild(a);
           a.click();
           document.body.removeChild(a);
@@ -1024,21 +1140,22 @@
 
         } else if (choice === "2") {
           const backupData = {
+            backupId: crypto.randomUUID(),
             exportDate: new Date().toISOString(),
             user: currentUser.email,
             totalCustomers: custSnap.docs.length,
             totalTransactions: txSnap.docs.length,
             customers: custSnap.docs.map(d => ({ id: d.id, ...d.data() })),
             transactions: txSnap.docs.map(d => ({ id: d.id, ...d.data() })),
-            gallaMeta: { openingBalance: baseInitialOpening },
-            footerBranding: "GG Digi Book • Powered by Global Guru"
+            gallaMeta: { openingBalance: gallaOpeningBalance },
+            footerBranding: "GG Khata • Powered by Global Guru"
           };
 
           const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: "application/json" });
           const url = URL.createObjectURL(blob);
           const a = document.createElement("a");
           a.href = url;
-          a.download = `GG_DigiBook_Backup_${dateStr}.json`;
+          a.download = `GG_Khata_Backup_${dateStr}.json`;
           document.body.appendChild(a);
           a.click();
           document.body.removeChild(a);
@@ -1070,7 +1187,14 @@
         try {
           const imported = JSON.parse(e.target.result);
           if (!imported.customers || !imported.transactions) {
-            throw new Error("Invalid backup format. Please select an authentic GG Digi Book JSON backup.");
+            throw new Error("Invalid backup format. Please select an authentic GG Khata JSON backup.");
+          }
+
+          const fallbackBackupId = `${imported.exportDate || 'legacy'}_${imported.user || 'unknown'}_${imported.customers.length}_${imported.transactions.length}`;
+          const safeBackupId = String(imported.backupId || fallbackBackupId).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 180);
+          const importMarkerRef = doc(db, "backup_imports", `${currentUser.uid}_${safeBackupId}`);
+          if ((await getDoc(importMarkerRef)).exists()) {
+            throw new Error("This backup has already been imported into this account.");
           }
 
           const customerIdMap = {};
@@ -1096,16 +1220,23 @@
               note: tx.note || "",
               isGallaEntry: tx.isGallaEntry || false,
               gallaAction: tx.gallaAction || "",
+              receiptImageUrl: tx.receiptImageUrl || "",
               receiptImage: tx.receiptImage || "",
               createdAt: tx.createdAt || new Date().toISOString()
             });
           }
 
-          if (imported.gallaMeta && imported.gallaMeta.openingBalance) {
+          if (imported.gallaMeta && Object.prototype.hasOwnProperty.call(imported.gallaMeta, 'openingBalance')) {
             await setDoc(doc(db, "galla_meta", currentUser.uid), {
               openingBalance: Number(imported.gallaMeta.openingBalance)
             }, { merge: true });
           }
+
+          await setDoc(importMarkerRef, {
+            userId: currentUser.uid,
+            backupId: safeBackupId,
+            importedAt: new Date().toISOString()
+          });
 
           playSound('success');
           alert(`Successfully imported ${imported.customers.length} customers and ${imported.transactions.length} transactions to your account!`);
@@ -1118,9 +1249,27 @@
       reader.readAsText(file);
     };
 
+    async function uploadAttachedReceipt() {
+      if (!attachedPhotoBlob) return '';
+      const fileName = `${Date.now()}_${crypto.randomUUID()}.jpg`;
+      const fileRef = storageRef(storage, `receipts/${currentUser.uid}/${fileName}`);
+      await uploadBytes(fileRef, attachedPhotoBlob, { contentType: 'image/jpeg' });
+      return await getDownloadURL(fileRef);
+    }
+
     window.handleReceiptUpload = (event) => {
       const file = event.target.files[0];
       if (!file) return;
+      if (!file.type.startsWith('image/')) {
+        alert('Please select a valid image file.');
+        event.target.value = '';
+        return;
+      }
+      if (file.size > 10 * 1024 * 1024) {
+        alert('Image is too large. Maximum allowed size is 10 MB.');
+        event.target.value = '';
+        return;
+      }
 
       const reader = new FileReader();
       reader.onload = (e) => {
@@ -1140,18 +1289,27 @@
           canvas.height = height;
           canvas.getContext('2d').drawImage(img, 0, 0, width, height);
 
-          attachedPhotoBase64 = canvas.toDataURL('image/jpeg', 0.65);
-          const p1 = document.getElementById('photo-preview-container');
-          const p2 = document.getElementById('d-photo-preview-container');
-          if (p1) {
-            p1.classList.remove('hidden');
-            document.getElementById('photo-preview-thumb').src = attachedPhotoBase64;
-          }
-          if (p2) {
-            p2.classList.remove('hidden');
-            document.getElementById('d-photo-preview-thumb').src = attachedPhotoBase64;
-          }
-          playSound('success');
+          canvas.toBlob((blob) => {
+            if (!blob) {
+              alert('Could not process this image.');
+              return;
+            }
+            attachedPhotoBlob = blob;
+            if (attachedPhotoPreviewUrl) URL.revokeObjectURL(attachedPhotoPreviewUrl);
+            attachedPhotoPreviewUrl = URL.createObjectURL(blob);
+
+            const p1 = document.getElementById('photo-preview-container');
+            const p2 = document.getElementById('d-photo-preview-container');
+            if (p1) {
+              p1.classList.remove('hidden');
+              document.getElementById('photo-preview-thumb').src = attachedPhotoPreviewUrl;
+            }
+            if (p2) {
+              p2.classList.remove('hidden');
+              document.getElementById('d-photo-preview-thumb').src = attachedPhotoPreviewUrl;
+            }
+            playSound('success');
+          }, 'image/jpeg', 0.72);
         };
         img.src = e.target.result;
       };
@@ -1159,7 +1317,9 @@
     };
 
     window.clearPhotoAttachment = () => {
-      attachedPhotoBase64 = "";
+      attachedPhotoBlob = null;
+      if (attachedPhotoPreviewUrl) URL.revokeObjectURL(attachedPhotoPreviewUrl);
+      attachedPhotoPreviewUrl = "";
       const input = document.getElementById('receipt-camera-input');
       const dInput = document.getElementById('d-receipt-camera-input');
       if (input) input.value = "";
@@ -1170,10 +1330,23 @@
       if (p2) p2.classList.add('hidden');
     };
 
-    window.viewImage = (base64) => {
+    window.viewTransactionImage = (transactionId) => {
       playSound('tap');
+      const transaction = currentTransactions.find(t => t.id === transactionId);
+      const imageSource = transaction?.receiptImageUrl || transaction?.receiptImage || '';
+      if (!imageSource || (!imageSource.startsWith('https://') && !imageSource.startsWith('data:image/'))) {
+        alert('Receipt image is unavailable.');
+        return;
+      }
       const w = window.open("");
-      w.document.write(`<img src="${base64}" style="max-width:92%; margin:30px auto; display:block; border-radius:16px; box-shadow:0 12px 30px rgba(0,0,0,0.15);">`);
+      if (!w) {
+        alert('Please allow pop-ups to view the receipt.');
+        return;
+      }
+      const image = w.document.createElement('img');
+      image.src = imageSource;
+      image.style.cssText = 'max-width:92%;margin:30px auto;display:block;border-radius:16px;box-shadow:0 12px 30px rgba(0,0,0,0.15)';
+      w.document.body.appendChild(image);
     };
 
     window.startSpeechRecognition = (isDesktop = false) => {
@@ -1202,7 +1375,28 @@
       playSound('delete');
       if (!confirm(`Are you sure you want to delete ${selectedCustomer.name}'s account? All records will be removed.`)) return;
       try {
-        await deleteDoc(doc(db, "customers", selectedCustomer.id));
+        const customerId = selectedCustomer.id;
+        const customerRef = doc(db, "customers", customerId);
+        const customerSnap = await getDoc(customerRef);
+        if (!customerSnap.exists() || customerSnap.data().userId !== currentUser.uid) {
+          throw new Error('Customer account not found or access denied.');
+        }
+
+        const txQuery = query(
+          collection(db, "transactions"),
+          where("userId", "==", currentUser.uid),
+          where("customerId", "==", customerId)
+        );
+        const txSnapshot = await getDocs(txQuery);
+        const refsToDelete = txSnapshot.docs.map(item => item.ref);
+        refsToDelete.push(customerRef);
+
+        for (let i = 0; i < refsToDelete.length; i += 450) {
+          const batch = writeBatch(db);
+          refsToDelete.slice(i, i + 450).forEach(itemRef => batch.delete(itemRef));
+          await batch.commit();
+        }
+
         selectedCustomer = null;
         closeModal();
         const dPlaceholder = document.getElementById('desktop-no-customer-pane');
@@ -1226,7 +1420,7 @@
       if (phone.startsWith('0')) phone = '92' + phone.substring(1);
       const bal = selectedCustomer.balance || 0;
       const statusText = bal >= 0 ? 'Pending to pay' : 'Advance balance';
-      const msg = `Dear ${selectedCustomer.name},\nAccording to GG Digi Book records, your current ledger balance is Rs. ${Math.abs(bal).toLocaleString()} (${statusText}).\nPlease review and confirm. Thank you!`;
+      const msg = `Dear ${toTitleCase(selectedCustomer.name)},\nAccording to GG Khata records, your current ledger balance is Rs. ${Math.abs(bal).toLocaleString()} (${statusText}).\nPlease review and confirm. Thank you!`;
       window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
     };
   </script>
@@ -1237,9 +1431,9 @@
   <div id="login-screen" class="flex flex-col items-center justify-center min-h-screen p-5 bg-gradient-to-b from-emerald-50/60 to-slate-100">
     <div class="glass-card p-8 rounded-3xl shadow-2xl max-w-sm w-full text-center border border-white">
       <div class="relative inline-block mb-4">
-        <img src="logo.png" alt="GG Digi Book" class="w-24 h-24 rounded-full mx-auto object-contain shadow-lg bg-white p-1 ring-4 ring-emerald-50">
+        <img src="logo.png" alt="GG Khata" class="w-24 h-24 rounded-full mx-auto object-contain shadow-lg bg-white p-1 ring-4 ring-emerald-50">
       </div>
-      <h2 class="text-2xl font-extrabold text-slate-900 tracking-tight">GG Digi Book</h2>
+      <h2 class="text-2xl font-extrabold text-slate-900 tracking-tight">GG Khata</h2>
       <p class="text-xs text-slate-500 font-medium mt-1 mb-8">Your Secure Cloud Ledger Book</p>
       
       <button onclick="loginGoogle()" class="w-full py-3.5 px-4 bg-white hover:bg-slate-50 active:scale-[0.98] border border-slate-200 text-slate-700 font-bold rounded-2xl shadow-sm flex items-center justify-center gap-3 transition">
@@ -1263,7 +1457,7 @@
         <div class="flex items-center gap-3">
           <img src="logo.png" alt="GG Logo" class="w-11 h-11 rounded-full bg-white p-0.5 object-contain shadow-md ring-2 ring-emerald-500/20">
           <div>
-            <h2 class="text-base font-extrabold text-slate-900 tracking-tight leading-tight">GG Digi Book</h2>
+            <h2 class="text-base font-extrabold text-slate-900 tracking-tight leading-tight">GG Khata</h2>
             <span class="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full inline-block mt-0.5">Cloud Sync 🟢</span>
           </div>
         </div>
@@ -1297,7 +1491,7 @@
         </button>
         <div class="flex items-center justify-center gap-1.5 text-[11px] font-bold text-slate-400 text-center">
           <img src="logo.png" alt="GG" class="w-3.5 h-3.5 rounded-full object-contain">
-          <span>GG Digi Book • Powered by Global Guru</span>
+          <span>GG Khata • Powered by Global Guru</span>
         </div>
       </div>
     </aside>
@@ -1310,7 +1504,7 @@
         <div class="flex items-center gap-3">
           <img src="logo.png" alt="GG Logo" class="w-10 h-10 rounded-full bg-white p-0.5 object-contain shadow-md ring-2 ring-emerald-400/30">
           <div>
-            <h1 class="text-sm font-extrabold tracking-tight leading-tight">GG Digi Book</h1>
+            <h1 class="text-sm font-extrabold tracking-tight leading-tight">GG Khata</h1>
             <p id="user-name" class="text-[11px] text-emerald-200/90 font-medium truncate max-w-[170px]"></p>
           </div>
         </div>
@@ -1421,7 +1615,7 @@
                 </div>
                 
                 <div class="col-span-7 relative flex items-center">
-                  <input type="text" id="d-tx-note" onkeydown="if(event.key==='Enter') addTransaction('diye', true)" placeholder="Note / Description" class="w-full text-xs p-3 pr-16 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none">
+                  <input type="text" id="d-tx-note" onkeydown="if(event.key==='Enter') addTransaction('diye', true)" placeholder="Note" class="w-full text-xs p-3 pr-16 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none">
                   <div class="absolute right-2 flex items-center gap-1.5">
                     <button id="d-mic-btn" onclick="startSpeechRecognition(true)" title="Voice to Text" class="p-1.5 rounded-lg text-slate-400 hover:text-emerald-700 text-sm transition">🎙️</button>
                     <label for="d-receipt-camera-input" title="Attach Receipt/Bill" class="p-1.5 rounded-lg text-slate-400 hover:text-emerald-700 text-sm cursor-pointer transition">📸</label>
@@ -1449,104 +1643,116 @@
 
       </div>
 
-      <!-- PAGE 2: ACCOUNTS / GALLA VIEW (Daily Automatic Cutoff) -->
+      <!-- PAGE 2: ACCOUNTS / GALLA VIEW -->
       <div id="view-accounts" class="hidden flex-1 p-4 md:p-6 pb-20 md:pb-6 space-y-4 overflow-y-auto bg-slate-50">
-        <div class="bg-white p-4 md:p-5 rounded-3xl border border-slate-200/90 shadow-sm space-y-3 max-w-5xl mx-auto">
+        
+        <!-- Live Galla Strip -->
+        <div class="bg-white p-4 md:p-5 rounded-3xl border border-slate-200/90 shadow-sm space-y-3 w-full">
           <div class="flex items-center justify-between">
             <span class="text-xs font-black text-slate-400 uppercase tracking-wider">Live Galla Cash Flow</span>
-            <span class="text-[10px] font-bold bg-emerald-50 text-emerald-700 px-2.5 py-0.5 rounded-full">Daily Auto Cutoff 🔄</span>
+            <span class="text-[10px] font-bold bg-emerald-50 text-emerald-700 px-2.5 py-0.5 rounded-full border border-emerald-200">
+              Daily Auto Cutoff 🔄
+            </span>
           </div>
 
-          <div class="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-3 text-center">
-            <div class="bg-slate-50 p-3 rounded-2xl border border-slate-100 flex flex-col justify-between">
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-4 text-center">
+            <div class="bg-slate-50 p-3.5 rounded-2xl border border-slate-100 flex flex-col justify-between">
               <div class="flex items-center justify-center gap-1.5">
                 <span class="text-[10px] font-bold text-slate-500 uppercase">Day's Opening</span>
-                <button onclick="editOpeningBalance()" title="Edit Base Starting Cash" class="text-xs text-emerald-700 hover:text-emerald-900 transition">✏️</button>
+                <button onclick="editOpeningBalance()" title="Set/Edit Base Opening Balance" class="text-xs text-emerald-700 hover:text-emerald-900 transition">✏️</button>
               </div>
               <h5 id="galla-strip-opening" class="text-sm md:text-base font-black text-slate-800 mt-1.5">Rs. 0</h5>
             </div>
 
-            <div class="bg-emerald-50/60 p-3 rounded-2xl border border-emerald-100 flex flex-col justify-between">
+            <div class="bg-emerald-50/60 p-3.5 rounded-2xl border border-emerald-100 flex flex-col justify-between">
               <span class="text-[10px] font-bold text-emerald-700 uppercase">Today Cash In (+)</span>
               <h5 id="galla-strip-in" class="text-sm md:text-base font-black text-emerald-600 mt-1.5">Rs. 0</h5>
             </div>
 
-            <div class="bg-rose-50/60 p-3 rounded-2xl border border-rose-100 flex flex-col justify-between">
+            <div class="bg-rose-50/60 p-3.5 rounded-2xl border border-rose-100 flex flex-col justify-between">
               <span class="text-[10px] font-bold text-rose-700 uppercase">Today Cash Out (-)</span>
               <h5 id="galla-strip-out" class="text-sm md:text-base font-black text-rose-600 mt-1.5">Rs. 0</h5>
             </div>
 
-            <div class="bg-slate-900 text-white p-3 rounded-2xl shadow-sm flex flex-col justify-between">
+            <div class="bg-slate-900 text-white p-3.5 rounded-2xl shadow-sm flex flex-col justify-between">
               <span class="text-[10px] font-bold text-emerald-400 uppercase">Closing Cash</span>
               <h5 id="galla-strip-closing" class="text-sm md:text-base font-black text-white mt-1.5">Rs. 0</h5>
             </div>
           </div>
         </div>
 
-        <div class="grid grid-cols-1 md:grid-cols-12 gap-4 max-w-5xl mx-auto">
-          <!-- Galla Entry Box: Optional Party Dropdown -->
-          <div class="md:col-span-5 bg-white p-5 rounded-3xl border border-slate-200/80 shadow-sm space-y-3.5">
+        <!-- 2 Column Responsive Layout -->
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-4 w-full items-start">
+          
+          <!-- Left: Galla Entry Form -->
+          <div class="lg:col-span-4 bg-white p-5 rounded-3xl border border-slate-200/80 shadow-sm space-y-3.5">
             <div class="flex items-center justify-between">
               <h4 class="text-xs font-extrabold text-slate-800 uppercase tracking-wider">Galla Entry (Counter / Accounts)</h4>
               <span class="text-[10px] font-bold bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-md">Live Sync</span>
             </div>
-            <p class="text-[11px] text-slate-400">Party select karna optional hai. Khali chhorne par direct cash entry hogi:</p>
+            <p class="text-[11px] text-slate-400">Party select karna optional hai. Khali chhorne par direct counter entry hogi:</p>
 
             <div>
               <label class="text-[10px] font-bold text-slate-500 block mb-1">Select Account / Party (Optional):</label>
-              <select id="galla-party-select" class="w-full text-xs font-bold p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:border-emerald-500 outline-none"></select>
+              <select id="galla-party-select" class="w-full text-xs font-bold p-3 bg-slate-50 border border-slate-200 rounded-xl focus:border-emerald-500 outline-none"></select>
             </div>
 
-            <div class="space-y-2">
+            <div class="space-y-2.5">
               <div>
-                <input type="text" id="galla-entry-amount" onkeydown="handleGallaFormulaInput(event, 'in')" placeholder="Amount or 500+6000" class="w-full text-xs font-bold p-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-emerald-500">
+                <input type="text" id="galla-entry-amount" onkeydown="handleGallaFormulaInput(event, 'in')" placeholder="Amount or 500+6000" class="w-full text-xs font-bold p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-emerald-500">
                 <span class="text-[9px] text-slate-400 mt-0.5 block font-medium">Supports +, -, *, / & Enter</span>
               </div>
-              <input type="text" id="galla-entry-note" onkeydown="if(event.key==='Enter') processGallaAccountEntry('in')" placeholder="Description / Note (e.g. Chai, Sale, Bill)" class="w-full text-xs p-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-emerald-500">
+              <input type="text" id="galla-entry-note" onkeydown="if(event.key==='Enter') processGallaAccountEntry('in')" placeholder="Note (e.g. Chai, Sale, Bill)" class="w-full text-xs p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-emerald-500">
             </div>
 
             <div class="grid grid-cols-2 gap-2 pt-1">
-              <button onclick="processGallaAccountEntry('in')" class="py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-black rounded-xl shadow-md transition flex flex-col items-center">
+              <button onclick="processGallaAccountEntry('in')" class="py-3 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-black rounded-xl shadow-md transition flex flex-col items-center">
                 <span>+ CASH IN (Aaya)</span>
                 <span class="text-[9px] font-normal text-emerald-100">Galla +</span>
               </button>
-              <button onclick="processGallaAccountEntry('out')" class="py-2.5 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white text-xs font-black rounded-xl shadow-md transition flex flex-col items-center">
+              <button onclick="processGallaAccountEntry('out')" class="py-3 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white text-xs font-black rounded-xl shadow-md transition flex flex-col items-center">
                 <span>- CASH OUT (Gaya)</span>
                 <span class="text-[9px] font-normal text-rose-100">Galla -</span>
               </button>
             </div>
           </div>
 
-          <!-- History Table with Grand Total (Meezan) Footer -->
-          <div class="md:col-span-7 bg-white p-5 rounded-3xl border border-slate-200/80 shadow-sm space-y-3">
-            <div class="flex items-center justify-between">
+          <!-- Right: Full Width History Table with Note & Balance -->
+          <div class="lg:col-span-8 bg-white p-5 rounded-3xl border border-slate-200/80 shadow-sm space-y-3">
+            <div class="flex items-center justify-between pb-1">
               <h4 class="text-xs font-extrabold text-slate-800 uppercase tracking-wider">Cash Book Activity (History)</h4>
-              <button onclick="downloadGallaPDF()" class="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 rounded-xl text-xs font-bold border border-emerald-200 transition active:scale-95 flex items-center gap-1 shadow-sm">
+              <button onclick="downloadGallaPDF()" class="px-3.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 rounded-xl text-xs font-bold border border-emerald-200 transition active:scale-95 flex items-center gap-1.5 shadow-sm">
                 <span>📄</span> Download PDF
               </button>
             </div>
-            <div class="overflow-x-auto max-h-[380px]">
-              <table class="w-full text-left border-collapse">
+            
+            <div class="overflow-x-auto rounded-2xl border border-slate-100">
+              <table class="w-full min-w-[760px] text-left border-collapse table-auto">
                 <thead>
-                  <tr class="border-b border-slate-200 text-[10px] font-extrabold text-slate-400 uppercase">
-                    <th class="p-2.5">Date</th>
-                    <th class="p-2.5">Account</th>
-                    <th class="p-2.5">Type</th>
-                    <th class="p-2.5 text-right">Amount</th>
+                  <tr class="bg-slate-50/80 border-b border-slate-200 text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">
+                    <th class="p-3 min-w-[145px]">Date & Time</th>
+                    <th class="p-3 min-w-[120px]">Account</th>
+                    <th class="p-3 text-center w-24">Type</th>
+                    <th class="p-3 min-w-[120px]">Note</th>
+                    <th class="p-3 text-right min-w-[110px]">Amount</th>
+                    <th class="p-3 text-right min-w-[110px]">Balance</th>
                   </tr>
                 </thead>
                 <tbody id="galla-history-tbody"></tbody>
                 <tfoot class="border-t-2 border-slate-300 bg-slate-900 text-white text-xs font-bold">
                   <tr>
-                    <td class="p-2.5" colspan="2">TODAY'S MEEZAN</td>
-                    <td class="p-2.5 text-emerald-400 font-extrabold text-[11px]" id="footer-total-in">+ Rs. 0</td>
-                    <td class="p-2.5 text-right text-emerald-300 font-black" id="footer-grand-closing">Rs. 0</td>
+                    <td class="p-3" colspan="2">GRAND TOTAL (MEEZAN)</td>
+                    <td class="p-3 text-center text-emerald-300 font-extrabold text-[10px]">TODAY FLOW</td>
+                    <td class="p-3 text-center text-emerald-400 font-extrabold text-[10px] whitespace-nowrap" id="footer-today-flow">In: Rs. 0 | Out: Rs. 0</td>
+                    <td class="p-3 text-right text-white font-extrabold text-[10px] whitespace-nowrap" id="footer-day-net">Day Net: Rs. 0</td>
+                    <td class="p-3 text-right text-emerald-300 font-black whitespace-nowrap" id="footer-grand-closing">Closing: Rs. 0</td>
                   </tr>
                 </tfoot>
               </table>
             </div>
           </div>
         </div>
+
       </div>
 
       <!-- PAGE 3: SETTINGS VIEW -->
@@ -1652,7 +1858,7 @@
 
           <div class="flex items-center justify-center gap-2 py-4 text-slate-400 text-xs font-bold">
             <img src="logo.png" alt="GG" class="w-4 h-4 rounded-full object-contain">
-            <span>GG Digi Book • Powered by Global Guru</span>
+            <span>GG Khata • Powered by Global Guru</span>
           </div>
         </div>
       </div>
@@ -1676,7 +1882,7 @@
 
   <!-- 4. CUSTOMER LEDGER MODAL (Mobile Only) -->
   <div id="tx-modal" onclick="closeModal()" class="md:hidden hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-end justify-center p-0">
-    <div onclick="event.stopPropagation()" class="bg-white w-full max-w-md max-h-[92vh] rounded-t-3xl p-5 shadow-2xl flex flex-col overflow-hidden animate-in">
+    <div onclick="event.stopPropagation()" class="bg-white w-full max-w-md max-h-[92vh] rounded-t-3xl p-5 shadow-2xl flex flex-col overflow-hidden">
       <div class="flex justify-between items-start pb-3 border-b border-slate-100">
         <div>
           <h3 id="modal-cust-name" class="text-base font-extrabold text-slate-900 leading-tight"></h3>
@@ -1712,7 +1918,7 @@
           </div>
           
           <div class="relative flex items-center">
-            <input type="text" id="tx-note" onkeydown="if(event.key==='Enter') addTransaction('diye')" placeholder="Note / Description" class="w-full text-xs p-2.5 pr-14 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none">
+            <input type="text" id="tx-note" onkeydown="if(event.key==='Enter') addTransaction('diye')" placeholder="Note" class="w-full text-xs p-2.5 pr-14 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none">
             <div class="absolute right-1.5 flex items-center gap-1">
               <button id="mic-btn" onclick="startSpeechRecognition(false)" title="Voice to Text" class="p-1 rounded-lg text-slate-400 hover:text-emerald-700 text-sm transition">🎙️</button>
               <label for="receipt-camera-input" title="Attach Receipt/Bill" class="p-1 rounded-lg text-slate-400 hover:text-emerald-700 text-sm cursor-pointer transition">📸</label>
