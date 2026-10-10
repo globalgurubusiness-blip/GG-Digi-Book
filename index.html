@@ -47,10 +47,16 @@
     let attachedPhotoBase64 = "";
     let gallaTxHistory = [];
 
-    let gallaOpeningBalance = 0;
+    let baseInitialOpening = 0;
+    let gallaDayOpening = 0;
     let gallaTotalIn = 0;
     let gallaTotalOut = 0;
     let gallaClosingCash = 0;
+
+    function getTodayDateStr() {
+      const d = new Date();
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    }
 
     let cachedLogoBase64 = null;
     function loadLogoImage() {
@@ -256,7 +262,7 @@
         tabAccountsBtn.className = activeMob;
         if (dTabAccountsBtn) dTabAccountsBtn.className = activeDesk;
         populateAccountSelectDropdown();
-        recalculateGallaStrip();
+        recalculateDailyGallaFlow();
       } else if (tab === 'settings') {
         settingsView.classList.remove('hidden');
         tabSettingsBtn.className = activeMob;
@@ -321,11 +327,11 @@
       onSnapshot(metaRef, (docSnap) => {
         if (docSnap.exists()) {
           const data = docSnap.data();
-          gallaOpeningBalance = Number(data.openingBalance || 0);
+          baseInitialOpening = Number(data.openingBalance || 0);
         } else {
-          gallaOpeningBalance = 0;
+          baseInitialOpening = 0;
         }
-        recalculateGallaStrip();
+        recalculateDailyGallaFlow();
       });
     }
 
@@ -333,38 +339,56 @@
       const q = query(collection(db, "transactions"), where("userId", "==", currentUser.uid));
       onSnapshot(q, (snapshot) => {
         gallaTxHistory = [];
-        gallaTotalIn = 0;
-        gallaTotalOut = 0;
 
         snapshot.forEach(docSnap => {
           const data = { id: docSnap.id, ...docSnap.data() };
-
           if (data.isGallaEntry === true) {
             gallaTxHistory.push(data);
-
-            if (data.gallaAction === 'in') {
-              gallaTotalIn += Number(data.amount || 0);
-            } else if (data.gallaAction === 'out') {
-              gallaTotalOut += Number(data.amount || 0);
-            }
           }
         });
 
         gallaTxHistory.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-        recalculateGallaStrip();
+        recalculateDailyGallaFlow();
         renderGallaTransactionsTable();
       });
     }
 
-    function recalculateGallaStrip() {
-      gallaClosingCash = gallaOpeningBalance + gallaTotalIn - gallaTotalOut;
+    // AUTOMATED DAILY CUTOFF & OPENING SHIFT
+    function recalculateDailyGallaFlow() {
+      const todayStr = getTodayDateStr();
+
+      let priorCashIn = 0;
+      let priorCashOut = 0;
+      let todayIn = 0;
+      let todayOut = 0;
+
+      gallaTxHistory.forEach(t => {
+        const amt = Number(t.amount || 0);
+        const tDate = (t.createdAt || "").slice(0, 10);
+        const isCashIn = (t.gallaAction === 'in') || (t.type === 'liye');
+        const isCashOut = (t.gallaAction === 'out') || (t.type === 'diye');
+
+        if (tDate === todayStr) {
+          if (isCashIn) todayIn += amt;
+          else if (isCashOut) todayOut += amt;
+        } else if (tDate < todayStr) {
+          if (isCashIn) priorCashIn += amt;
+          else if (isCashOut) priorCashOut += amt;
+        }
+      });
+
+      // Yesterday's closing automatically becomes today's morning opening
+      gallaDayOpening = baseInitialOpening + priorCashIn - priorCashOut;
+      gallaTotalIn = todayIn;
+      gallaTotalOut = todayOut;
+      gallaClosingCash = gallaDayOpening + gallaTotalIn - gallaTotalOut;
 
       const opEl = document.getElementById('galla-strip-opening');
       const inEl = document.getElementById('galla-strip-in');
       const outEl = document.getElementById('galla-strip-out');
       const closeEl = document.getElementById('galla-strip-closing');
 
-      if (opEl) opEl.innerText = `Rs. ${gallaOpeningBalance.toLocaleString()}`;
+      if (opEl) opEl.innerText = `Rs. ${gallaDayOpening.toLocaleString()}`;
       if (inEl) inEl.innerText = `Rs. ${gallaTotalIn.toLocaleString()}`;
       if (outEl) outEl.innerText = `Rs. ${gallaTotalOut.toLocaleString()}`;
       if (closeEl) closeEl.innerText = `Rs. ${gallaClosingCash.toLocaleString()}`;
@@ -379,7 +403,7 @@
 
     window.editOpeningBalance = async () => {
       playSound('tap');
-      const val = prompt("Apna Galla Opening (Base) Balance likhein:", gallaOpeningBalance);
+      const val = prompt("Apna Base Opening Balance likhein (e.g. Starting Cash):", baseInitialOpening);
       if (val === null) return;
       const num = evaluateExpression(val);
       if (isNaN(num)) {
@@ -620,7 +644,7 @@
       }
     };
 
-    // KHATA ENTRY (Customer Ledger): Only affects customer's balance. Does NOT affect Galla!
+    // KHATA ENTRY: Customer ledger balance only
     window.addTransaction = async (type, isDesktop = false) => {
       const amountInput = document.getElementById(isDesktop ? 'd-tx-amount' : 'tx-amount');
       const noteInput = document.getElementById(isDesktop ? 'd-tx-note' : 'tx-note');
@@ -662,7 +686,7 @@
       }
     };
 
-    // GALLA CASH ENTRY: Party selection is OPTIONAL now! Supports Direct Cash / Expense
+    // GALLA CASH ENTRY: Updates live daily cash
     window.processGallaAccountEntry = async (actionType) => {
       const partySelect = document.getElementById('galla-party-select');
       const amountInput = document.getElementById('galla-entry-amount');
@@ -680,14 +704,12 @@
       amountInput.value = evaluated;
       const partyObj = customersList.find(c => c.id === customerId);
 
-      // Sound play
       if (actionType === 'in') {
         playSound('credit');
       } else {
         playSound('debit');
       }
 
-      // If a party is selected, update that party's ledger balance
       let txTypeForParty = actionType === 'in' ? 'liye' : 'diye';
       if (partyObj) {
         const partyBalanceDiff = actionType === 'in' ? -evaluated : evaluated;
@@ -803,16 +825,16 @@
       pdf.setFontSize(8.5);
       pdf.setTextColor(30, 41, 59);
       pdf.setFont(undefined, 'bold');
-      pdf.text(`Opening: Rs. ${gallaOpeningBalance.toLocaleString()}`, 18, 46);
+      pdf.text(`Day's Opening: Rs. ${gallaDayOpening.toLocaleString()}`, 18, 46);
       pdf.setTextColor(5, 150, 105);
-      pdf.text(`Total In: +Rs. ${gallaTotalIn.toLocaleString()}`, 65, 46);
+      pdf.text(`Today In: +Rs. ${gallaTotalIn.toLocaleString()}`, 65, 46);
       pdf.setTextColor(225, 29, 72);
-      pdf.text(`Total Out: -Rs. ${gallaTotalOut.toLocaleString()}`, 115, 46);
+      pdf.text(`Today Out: -Rs. ${gallaTotalOut.toLocaleString()}`, 115, 46);
       pdf.setTextColor(15, 23, 42);
       pdf.text(`Closing: Rs. ${gallaClosingCash.toLocaleString()}`, 155, 46);
 
       const sortedHistory = [...gallaTxHistory].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-      let currentRunning = gallaOpeningBalance;
+      let currentRunning = baseInitialOpening;
 
       const tableData = sortedHistory.map(t => {
         const isCashIn = (t.gallaAction === 'in') || (t.type === 'liye');
@@ -837,9 +859,9 @@
         [
           'GRAND TOTAL (MEEZAN)',
           `Total Entries: ${sortedHistory.length}`,
-          'IN vs OUT',
+          'TODAY FLOW',
           `In: Rs. ${gallaTotalIn.toLocaleString()} | Out: Rs. ${gallaTotalOut.toLocaleString()}`,
-          `Net: Rs. ${(gallaTotalIn - gallaTotalOut).toLocaleString()}`,
+          `Day Net: Rs. ${(gallaTotalIn - gallaTotalOut).toLocaleString()}`,
           `Closing: Rs. ${gallaClosingCash.toLocaleString()}`
         ]
       ];
@@ -1008,7 +1030,7 @@
             totalTransactions: txSnap.docs.length,
             customers: custSnap.docs.map(d => ({ id: d.id, ...d.data() })),
             transactions: txSnap.docs.map(d => ({ id: d.id, ...d.data() })),
-            gallaMeta: { openingBalance: gallaOpeningBalance },
+            gallaMeta: { openingBalance: baseInitialOpening },
             footerBranding: "GG Digi Book • Powered by Global Guru"
           };
 
@@ -1427,30 +1449,30 @@
 
       </div>
 
-      <!-- PAGE 2: ACCOUNTS / GALLA VIEW -->
+      <!-- PAGE 2: ACCOUNTS / GALLA VIEW (Daily Automatic Cutoff) -->
       <div id="view-accounts" class="hidden flex-1 p-4 md:p-6 pb-20 md:pb-6 space-y-4 overflow-y-auto bg-slate-50">
         <div class="bg-white p-4 md:p-5 rounded-3xl border border-slate-200/90 shadow-sm space-y-3 max-w-5xl mx-auto">
           <div class="flex items-center justify-between">
             <span class="text-xs font-black text-slate-400 uppercase tracking-wider">Live Galla Cash Flow</span>
-            <span class="text-[10px] font-bold bg-slate-100 text-slate-500 px-2.5 py-0.5 rounded-full">Continuous Rolling</span>
+            <span class="text-[10px] font-bold bg-emerald-50 text-emerald-700 px-2.5 py-0.5 rounded-full">Daily Auto Cutoff 🔄</span>
           </div>
 
           <div class="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-3 text-center">
             <div class="bg-slate-50 p-3 rounded-2xl border border-slate-100 flex flex-col justify-between">
               <div class="flex items-center justify-center gap-1.5">
-                <span class="text-[10px] font-bold text-slate-500 uppercase">Opening Balance</span>
-                <button onclick="editOpeningBalance()" title="Set/Edit Opening Balance" class="text-xs text-emerald-700 hover:text-emerald-900 transition">✏️</button>
+                <span class="text-[10px] font-bold text-slate-500 uppercase">Day's Opening</span>
+                <button onclick="editOpeningBalance()" title="Edit Base Starting Cash" class="text-xs text-emerald-700 hover:text-emerald-900 transition">✏️</button>
               </div>
               <h5 id="galla-strip-opening" class="text-sm md:text-base font-black text-slate-800 mt-1.5">Rs. 0</h5>
             </div>
 
             <div class="bg-emerald-50/60 p-3 rounded-2xl border border-emerald-100 flex flex-col justify-between">
-              <span class="text-[10px] font-bold text-emerald-700 uppercase">Total Cash In (+)</span>
+              <span class="text-[10px] font-bold text-emerald-700 uppercase">Today Cash In (+)</span>
               <h5 id="galla-strip-in" class="text-sm md:text-base font-black text-emerald-600 mt-1.5">Rs. 0</h5>
             </div>
 
             <div class="bg-rose-50/60 p-3 rounded-2xl border border-rose-100 flex flex-col justify-between">
-              <span class="text-[10px] font-bold text-rose-700 uppercase">Total Cash Out (-)</span>
+              <span class="text-[10px] font-bold text-rose-700 uppercase">Today Cash Out (-)</span>
               <h5 id="galla-strip-out" class="text-sm md:text-base font-black text-rose-600 mt-1.5">Rs. 0</h5>
             </div>
 
@@ -1495,7 +1517,7 @@
             </div>
           </div>
 
-          <!-- History Table on Right Side with Grand Total (Meezan) Footer -->
+          <!-- History Table with Grand Total (Meezan) Footer -->
           <div class="md:col-span-7 bg-white p-5 rounded-3xl border border-slate-200/80 shadow-sm space-y-3">
             <div class="flex items-center justify-between">
               <h4 class="text-xs font-extrabold text-slate-800 uppercase tracking-wider">Cash Book Activity (History)</h4>
@@ -1516,7 +1538,7 @@
                 <tbody id="galla-history-tbody"></tbody>
                 <tfoot class="border-t-2 border-slate-300 bg-slate-900 text-white text-xs font-bold">
                   <tr>
-                    <td class="p-2.5" colspan="2">GRAND TOTAL (MEEZAN)</td>
+                    <td class="p-2.5" colspan="2">TODAY'S MEEZAN</td>
                     <td class="p-2.5 text-emerald-400 font-extrabold text-[11px]" id="footer-total-in">+ Rs. 0</td>
                     <td class="p-2.5 text-right text-emerald-300 font-black" id="footer-grand-closing">Rs. 0</td>
                   </tr>
