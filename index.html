@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- GG Khata - Complete Corrected Single-File Frontend v2.2 (13 Oct 2026) -->
+<!-- GG Khata - Complete Corrected Single-File Frontend v2.4 (21 Oct 2026) -->
 <html lang="en" dir="ltr">
 <head>
   <meta charset="UTF-8">
@@ -63,6 +63,7 @@
     let attachedPhotoBlob = null;
     let attachedPhotoPreviewUrl = "";
     let gallaTxHistory = [];
+    let customerLastEntryMap = {};
 
     let gallaOpeningBalance = 0;
     let gallaTodayIn = 0;
@@ -431,9 +432,18 @@
       const q = query(collection(db, "transactions"), where("userId", "==", currentUser.uid));
       unsubscribeAllTx = onSnapshot(q, (snapshot) => {
         gallaTxHistory = [];
+        customerLastEntryMap = {};
 
         snapshot.forEach(docSnap => {
           const data = { id: docSnap.id, ...docSnap.data() };
+
+          if (data.customerId && data.customerId !== 'direct_cash' && data.createdAt) {
+            const entryTime = new Date(data.createdAt).getTime();
+            const savedTime = new Date(customerLastEntryMap[data.customerId] || 0).getTime();
+            if (Number.isFinite(entryTime) && entryTime > savedTime) {
+              customerLastEntryMap[data.customerId] = data.createdAt;
+            }
+          }
 
           if (data.isGallaEntry === true) {
             gallaTxHistory.push(data);
@@ -444,6 +454,7 @@
 
         gallaTxHistory.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
         renderGallaTransactionsTable();
+        renderCustomers();
       });
     }
 
@@ -498,6 +509,22 @@
         if (currentFilter === 'receivable') return c.balance > 0;
         if (currentFilter === 'payable') return c.balance < 0;
         return true;
+      });
+
+      // Accounts with the latest entry stay on top. Accounts with no entry
+      // automatically remain below all active accounts.
+      filtered.sort((a, b) => {
+        const aLastEntry = customerLastEntryMap[a.id] || a.lastEntryAt || '';
+        const bLastEntry = customerLastEntryMap[b.id] || b.lastEntryAt || '';
+        const aHasEntry = Boolean(aLastEntry);
+        const bHasEntry = Boolean(bLastEntry);
+
+        if (aHasEntry !== bHasEntry) return aHasEntry ? -1 : 1;
+        if (aHasEntry && bHasEntry) {
+          const timeDifference = new Date(bLastEntry).getTime() - new Date(aLastEntry).getTime();
+          if (timeDifference !== 0) return timeDifference;
+        }
+        return String(a.name || '').localeCompare(String(b.name || ''));
       });
 
       if (filtered.length === 0) {
@@ -586,6 +613,65 @@
         playSound('success');
       } catch (err) {
         alert("Failed to create customer: " + err.message);
+      }
+    };
+
+    window.editCustomerDetails = async () => {
+      playSound('tap');
+      if (!selectedCustomer || !currentUser) return;
+
+      const editedName = prompt('Edit customer/account name:', selectedCustomer.name || '');
+      if (editedName === null) return;
+      const cleanName = editedName.trim();
+      if (!cleanName) {
+        alert('Customer name cannot be empty.');
+        return;
+      }
+
+      const editedPhone = prompt('Edit mobile number (optional):', selectedCustomer.phone || '');
+      if (editedPhone === null) return;
+      const cleanPhone = editedPhone.trim();
+      const previousName = selectedCustomer.name;
+
+      if (cleanName === previousName && cleanPhone === (selectedCustomer.phone || '')) return;
+
+      try {
+        const customerRef = doc(db, 'customers', selectedCustomer.id);
+        const customerSnap = await getDoc(customerRef);
+        if (!customerSnap.exists() || customerSnap.data().userId !== currentUser.uid) {
+          throw new Error('Customer account not found or access denied.');
+        }
+
+        await setDoc(customerRef, {
+          name: cleanName,
+          phone: cleanPhone,
+          updatedAt: new Date().toISOString()
+        }, { merge: true });
+
+        // Keep the denormalized customer name in old transaction records in sync.
+        if (cleanName !== previousName) {
+          const txQuery = query(
+            collection(db, 'transactions'),
+            where('userId', '==', currentUser.uid),
+            where('customerId', '==', selectedCustomer.id)
+          );
+          const txSnapshot = await getDocs(txQuery);
+          for (let i = 0; i < txSnapshot.docs.length; i += 450) {
+            const batch = writeBatch(db);
+            txSnapshot.docs.slice(i, i + 450).forEach(txDoc => {
+              batch.update(txDoc.ref, { customerName: cleanName });
+            });
+            await batch.commit();
+          }
+        }
+
+        selectedCustomer = { ...selectedCustomer, name: cleanName, phone: cleanPhone };
+        updateCustomerDetailUI();
+        renderCustomers();
+        populateAccountSelectDropdown();
+        playSound('success');
+      } catch (err) {
+        alert('Error updating customer details: ' + err.message);
       }
     };
 
@@ -751,6 +837,7 @@
         const customerName = selectedCustomer.name;
         const receiptImageUrl = await uploadAttachedReceipt();
         let committedBalance = 0;
+        const entryCreatedAt = new Date().toISOString();
 
         await runTransaction(db, async (firestoreTransaction) => {
           const customerRef = doc(db, "customers", customerId);
@@ -763,7 +850,10 @@
           committedBalance = latestBalance + balanceDiff;
           const txRef = doc(collection(db, "transactions"));
 
-          firestoreTransaction.update(customerRef, { balance: committedBalance });
+          firestoreTransaction.update(customerRef, {
+            balance: committedBalance,
+            lastEntryAt: entryCreatedAt
+          });
           firestoreTransaction.set(txRef, {
             userId: currentUser.uid,
             customerId,
@@ -773,7 +863,7 @@
             note: noteInput.value.trim(),
             isGallaEntry: false,
             receiptImageUrl,
-            createdAt: new Date().toISOString()
+            createdAt: entryCreatedAt
           });
         });
 
@@ -819,6 +909,7 @@
 
       try {
         if (partyObj) {
+          const entryCreatedAt = new Date().toISOString();
           await runTransaction(db, async (firestoreTransaction) => {
             const customerRef = doc(db, "customers", partyObj.id);
             const customerSnap = await firestoreTransaction.get(customerRef);
@@ -828,7 +919,10 @@
             const latestBalance = Number(customerSnap.data().balance || 0);
             const partyBalanceDiff = actionType === 'in' ? -evaluated : evaluated;
             const txRef = doc(collection(db, "transactions"));
-            firestoreTransaction.update(customerRef, { balance: latestBalance + partyBalanceDiff });
+            firestoreTransaction.update(customerRef, {
+              balance: latestBalance + partyBalanceDiff,
+              lastEntryAt: entryCreatedAt
+            });
             firestoreTransaction.set(txRef, {
               userId: currentUser.uid,
               customerId: partyObj.id,
@@ -838,7 +932,7 @@
               note: note || defaultNote,
               isGallaEntry: true,
               gallaAction: actionType,
-              createdAt: new Date().toISOString()
+              createdAt: entryCreatedAt
             });
           });
         } else {
@@ -1455,7 +1549,7 @@
   </div>
 
   <!-- 2. MAIN APP RESPONSIVE WRAPPER -->
-  <div id="app-screen" class="hidden min-h-screen flex flex-col md:flex-row bg-slate-100">
+  <div id="app-screen" class="hidden h-[100dvh] overflow-hidden flex flex-col md:flex-row bg-slate-100">
     
     <!-- DESKTOP LEFT SIDEBAR -->
     <aside class="hidden md:flex flex-col w-64 lg:w-72 bg-white border-r border-slate-200 h-screen sticky top-0 z-30 p-5 justify-between shadow-sm">
@@ -1503,10 +1597,10 @@
     </aside>
 
     <!-- MAIN CONTENT AREA -->
-    <div class="flex-1 flex flex-col min-h-screen max-w-md md:max-w-none mx-auto md:mx-0 w-full bg-white md:bg-slate-50 border-x md:border-x-0 border-slate-200">
+    <div class="flex-1 flex flex-col min-h-0 h-full max-w-md md:max-w-none mx-auto md:mx-0 w-full bg-white md:bg-slate-50 border-x md:border-x-0 border-slate-200 overflow-hidden">
       
       <!-- Mobile Top Header -->
-      <header class="md:hidden bg-gradient-to-r from-emerald-800 to-emerald-700 text-white p-4 flex justify-between items-center shadow-lg sticky top-0 z-20">
+      <header class="md:hidden flex-none bg-gradient-to-r from-emerald-800 to-emerald-700 text-white p-4 flex justify-between items-center shadow-lg z-20">
         <div class="flex items-center gap-3">
           <img src="logo.png" alt="GG Logo" class="w-10 h-10 rounded-full bg-white p-0.5 object-contain shadow-md ring-2 ring-emerald-400/30">
           <div>
@@ -1520,8 +1614,8 @@
       </header>
 
       <!-- PAGE 1: LEDGER VIEW -->
-      <div id="view-ledger" class="flex-1 flex flex-col md:flex-row pb-20 md:pb-0 h-full">
-        <div class="w-full md:w-[380px] lg:w-[420px] md:border-r border-slate-200 flex flex-col bg-white">
+      <div id="view-ledger" class="flex-1 min-h-0 flex flex-col md:flex-row pb-20 md:pb-0 overflow-hidden">
+        <div class="w-full h-full min-h-0 md:w-[380px] lg:w-[420px] md:border-r border-slate-200 flex flex-col bg-white overflow-hidden">
           <div class="p-4 bg-gradient-to-b from-emerald-50/60 to-transparent border-b border-slate-100 space-y-3">
             <div class="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-sm flex items-center justify-between">
               <div>
@@ -1564,9 +1658,10 @@
             </div>
           </div>
 
-          <div id="customer-list" class="flex-1 overflow-y-auto divide-y divide-slate-100 max-h-[calc(100vh-360px)] md:max-h-none"></div>
+          <!-- Separate independent scroll area for customer Cash In / Cash Out accounts -->
+          <div id="customer-list" class="flex-1 min-h-0 overflow-y-auto overscroll-contain divide-y divide-slate-100 custom-scroll"></div>
 
-          <div class="p-3 bg-white/95 border-t border-slate-100 sticky bottom-14 md:bottom-0 z-10 backdrop-blur-md">
+          <div class="flex-none p-3 bg-white/95 border-t border-slate-100 z-10 backdrop-blur-md">
             <button onclick="addNewCustomer()" class="w-full py-3 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white font-bold rounded-2xl shadow-lg shadow-emerald-600/20 flex items-center justify-center gap-2 transition text-sm">
               <span class="text-lg leading-none font-black">+</span> Add New Customer
             </button>
@@ -1593,6 +1688,9 @@
               <div class="flex items-center gap-2">
                 <button onclick="sendWhatsApp()" class="px-3.5 py-2 bg-emerald-50 text-emerald-800 border border-emerald-200 font-bold rounded-xl flex items-center gap-1.5 text-xs hover:bg-emerald-100 transition shadow-sm">
                   <span>💬</span> WhatsApp
+                </button>
+                <button onclick="editCustomerDetails()" title="Edit Customer Name or Mobile Number" class="px-3.5 py-2 bg-blue-50 text-blue-700 border border-blue-200 font-bold rounded-xl flex items-center gap-1.5 text-xs hover:bg-blue-100 transition shadow-sm">
+                  <span>✏️</span> Edit
                 </button>
                 <button onclick="downloadPDF()" class="px-3.5 py-2 bg-white text-slate-700 border border-slate-200 font-bold rounded-xl flex items-center gap-1.5 text-xs hover:bg-slate-100 transition shadow-sm">
                   <span>📄</span> PDF
@@ -1897,6 +1995,7 @@
           <div id="modal-cust-balance"></div>
         </div>
         <div class="flex items-center gap-1.5">
+          <button onclick="editCustomerDetails()" title="Edit Customer Name or Mobile Number" class="p-2 text-blue-600 hover:bg-blue-50 rounded-xl transition">✏️</button>
           <button onclick="deleteCustomer()" title="Delete Customer Ledger" class="p-2 text-rose-500 hover:bg-rose-50 rounded-xl transition">🗑️</button>
           <button onclick="closeModal()" class="text-slate-400 hover:text-slate-700 text-2xl font-bold leading-none p-2">&times;</button>
         </div>
