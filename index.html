@@ -1265,7 +1265,7 @@
       const pageHeight = doc.internal.pageSize.height || doc.internal.pageSize.getHeight();
       const pageWidth = doc.internal.pageSize.width || doc.internal.pageSize.getWidth();
 
-      const text = `${getActiveBusinessTitle()} • Powered by GG Khata`;
+      const text = "GG Khata • Powered by Global Guru";
       doc.setFontSize(8);
       doc.setTextColor(148, 163, 184);
       doc.setFont(undefined, 'bold');
@@ -1618,7 +1618,7 @@
             csv += `"${c.name}","${c.phone}",${Math.abs(c.balance || 0)},"${status}"\n`;
           });
 
-          csv += `\n"${getActiveBusinessTitle()} • Powered by GG Khata","","","","","","",""\n`;
+          csv += `\n"GG Khata • Powered by Global Guru","","","","","","",""\n`;
 
           const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
           const url = URL.createObjectURL(blob);
@@ -1642,7 +1642,7 @@
             customers: custSnap.docs.map(d => ({ id: d.id, ...d.data() })),
             transactions: txSnap.docs.map(d => ({ id: d.id, ...d.data() })),
             gallaMeta: { openingBalance: gallaOpeningBalance },
-            footerBranding: `${getActiveBusinessTitle()} • Powered by GG Khata`
+            footerBranding: "GG Khata • Powered by Global Guru"
           };
 
           const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: "application/json" });
@@ -2034,7 +2034,7 @@
       try {
         const bDoc = await getDoc(doc(db, "business_profiles", uId));
         let bizName = "Digital Ledger Book";
-        let bizTagline = "Powered by GG Khata";
+        let bizTagline = "GG Khata • Powered by Global Guru";
         if (bDoc.exists()) {
           const bData = bDoc.data();
           if (bData.name) bizName = bData.name;
@@ -2167,8 +2167,8 @@
   <!-- 1. LOGIN SCREEN -->
   <div id="login-screen" class="flex flex-col items-center justify-center min-h-screen p-5 bg-gradient-to-b from-emerald-50/60 to-slate-100">
     <div class="glass-card p-8 rounded-3xl shadow-2xl max-w-sm w-full text-center border border-white">
-      <div class="w-20 h-20 bg-emerald-600 text-white rounded-3xl mx-auto flex items-center justify-center font-black text-3xl shadow-lg ring-4 ring-emerald-100 mb-4">
-        GG
+      <div class="relative w-24 h-24 rounded-full mx-auto shadow-lg bg-white p-1 ring-4 ring-emerald-50 mb-4 flex items-center justify-center overflow-hidden">
+        <img src="https://globalgurubusiness-blip.github.io/gg-digi-book/logo.png" alt="GG Logo" class="w-full h-full rounded-full object-contain" onerror="this.onerror=null; this.src='https://globalgurubusiness-blip.github.io/gg-digi-book/logo.png';">
       </div>
       <h2 class="text-2xl font-extrabold text-slate-900 tracking-tight">GG Khata</h2>
       <p class="text-xs text-slate-500 font-medium mt-1 mb-8">Digital Ledger & Cash Book</p>
@@ -2192,12 +2192,12 @@
       <!-- Public Header Card -->
       <div class="bg-gradient-to-r from-emerald-800 to-emerald-700 text-white p-5 rounded-3xl shadow-lg flex items-center justify-between">
         <div class="flex items-center gap-3">
-          <div class="w-12 h-12 rounded-2xl bg-white/10 border border-white/20 flex items-center justify-center font-black text-xl text-white">
-            GG
+          <div class="relative w-12 h-12 rounded-full bg-white p-0.5 shadow-md ring-2 ring-white/40 flex items-center justify-center overflow-hidden flex-shrink-0">
+            <img src="https://globalgurubusiness-blip.github.io/gg-digi-book/logo.png" alt="GG Logo" class="w-full h-full rounded-full object-contain" onerror="this.onerror=null; this.src='https://globalgurubusiness-blip.github.io/gg-digi-book/logo.png';">
           </div>
           <div>
             <h1 id="pv-business-name" class="text-base md:text-lg font-black tracking-tight leading-tight">Business Ledger</h1>
-            <p id="pv-business-tagline" class="text-[11px] text-emerald-200 font-medium">Digital Khata Statement</p>
+            <p id="pv-business-tagline" class="text-[11px] text-emerald-200 font-medium">GG Khata • Powered by Global Guru</p>
           </div>
         </div>
         <div class="text-right">
@@ -2263,8 +2263,8 @@
     <aside class="hidden md:flex flex-col w-64 lg:w-72 bg-white border-r border-slate-200 h-screen sticky top-0 z-30 p-5 justify-between shadow-sm">
       <div class="space-y-6">
         <div class="flex items-center gap-3">
-          <div class="w-10 h-10 rounded-2xl bg-emerald-600 text-white flex items-center justify-center font-black text-base shadow-md ring-2 ring-emerald-500/20">
-            GG
+          <div class="w-11 h-11 rounded-full bg-white p-0.5 shadow-md ring-2 ring-emerald-500/20 flex items-center justify-center overflow-hidden flex-shrink-0">
+            <img src="https://globalgurubusiness-blip.github.io/gg-digi-book/logo.png" alt="GG Logo" class="w-full h-full rounded-full object-contain" onerror="this.onerror=null; this.src='https://globalgurubusiness-blip.github.io/gg-digi-book/logo.png';">
           </div>
           <div class="overflow-hidden">
             <h2 id="desktop-business-title" class="text-sm font-extrabold text-slate-900 tracking-tight leading-tight truncate">GG Khata</h2>
@@ -2311,8 +2311,8 @@
       <!-- Mobile Top Header -->
       <header class="md:hidden flex-none bg-gradient-to-r from-emerald-800 to-emerald-700 text-white p-4 flex justify-between items-center shadow-lg z-20">
         <div class="flex items-center gap-3">
-          <div class="w-9 h-9 rounded-2xl bg-white/15 text-white flex items-center justify-center font-black text-sm shadow-inner">
-            GG
+          <div class="w-10 h-10 rounded-full bg-white p-0.5 shadow-md ring-2 ring-emerald-400/30 flex items-center justify-center overflow-hidden flex-shrink-0">
+            <img src="https://globalgurubusiness-blip.github.io/gg-digi-book/logo.png" alt="GG Logo" class="w-full h-full rounded-full object-contain" onerror="this.onerror=null; this.src='https://globalgurubusiness-blip.github.io/gg-digi-book/logo.png';">
           </div>
           <div>
             <h1 class="text-sm font-extrabold tracking-tight leading-tight">GG Khata</h1>
