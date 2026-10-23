@@ -1,11 +1,10 @@
 <!DOCTYPE html>
-<!-- GG Khata - Complete Corrected Single-File Frontend v2.4 (21 Oct 2026) -->
+<!-- GG Khata - Single-File Frontend v3.0 (with Business Profile, Universal Share & Read-Only Customer Portal) -->
 <html lang="en" dir="ltr">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>GG Khata - Digital Ledger</title>
-  <link rel="icon" type="image/png" href="logo.png">
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -60,10 +59,17 @@
     let unsubscribeCustomers = null;
     let unsubscribeAllTx = null;
     let unsubscribeGallaMeta = null;
+    let unsubscribeBusinessProfile = null;
     let attachedPhotoBlob = null;
     let attachedPhotoPreviewUrl = "";
     let gallaTxHistory = [];
     let customerLastEntryMap = {};
+
+    let userBusinessProfile = {
+      name: "",
+      tagline: "",
+      phone: ""
+    };
 
     let gallaOpeningBalance = 0;
     let gallaTodayIn = 0;
@@ -71,21 +77,30 @@
     let gallaClosingCash = 0;
     let calculatedTodayOpening = 0;
 
-    let cachedLogoBase64 = null;
-    function loadLogoImage() {
-      const img = new Image();
-      img.crossOrigin = "Anonymous";
-      img.onload = () => {
-        const canvas = document.createElement("canvas");
-        canvas.width = img.width;
-        canvas.height = img.height;
-        const ctx = canvas.getContext("2d");
-        ctx.drawImage(img, 0, 0);
-        cachedLogoBase64 = canvas.toDataURL("image/png");
+    // Toast notification system (In-page, no alert)
+    window.showToast = (msg, type = 'success') => {
+      const container = document.getElementById('toast-container');
+      if (!container) return;
+      const toast = document.createElement('div');
+      const bgColors = {
+        success: 'bg-emerald-800 text-white',
+        error: 'bg-rose-800 text-white',
+        info: 'bg-slate-900 text-white'
       };
-      img.src = "logo.png";
-    }
-    loadLogoImage();
+      toast.className = `${bgColors[type] || bgColors.info} px-4 py-3 rounded-2xl shadow-xl text-xs font-bold flex items-center gap-2 transform transition-all duration-300 translate-y-2 opacity-0 max-w-sm pointer-events-auto`;
+      const icon = type === 'success' ? '✅' : type === 'error' ? '⚠️' : 'ℹ️';
+      toast.innerHTML = `<span>${icon}</span><span class="flex-1">${escapeHtml(msg)}</span>`;
+      container.appendChild(toast);
+      
+      requestAnimationFrame(() => {
+        toast.classList.remove('translate-y-2', 'opacity-0');
+      });
+
+      setTimeout(() => {
+        toast.classList.add('opacity-0', '-translate-y-2');
+        setTimeout(() => toast.remove(), 300);
+      }, 3500);
+    };
 
     let audioCtx = null;
     function getAudioCtx() {
@@ -241,28 +256,53 @@
       return getPakistanDateKey(new Date());
     }
 
+    function getActiveBusinessTitle() {
+      if (userBusinessProfile && userBusinessProfile.name && userBusinessProfile.name.trim()) {
+        return userBusinessProfile.name.trim();
+      }
+      if (currentUser && currentUser.displayName && currentUser.displayName.trim()) {
+        return currentUser.displayName.trim();
+      }
+      return "GG Khata Business";
+    }
+
     function cleanupRealtimeListeners() {
       if (unsubscribeCustomers) unsubscribeCustomers();
       if (unsubscribeAllTx) unsubscribeAllTx();
       if (unsubscribeGallaMeta) unsubscribeGallaMeta();
       if (unsubscribeTx) unsubscribeTx();
-      unsubscribeCustomers = unsubscribeAllTx = unsubscribeGallaMeta = unsubscribeTx = null;
+      if (unsubscribeBusinessProfile) unsubscribeBusinessProfile();
+      unsubscribeCustomers = unsubscribeAllTx = unsubscribeGallaMeta = unsubscribeTx = unsubscribeBusinessProfile = null;
+    }
+
+    // CHECK FOR PUBLIC VIEWER LINK (?u=...&c=...)
+    const urlParams = new URLSearchParams(window.location.search);
+    const publicUid = urlParams.get('u');
+    const publicCustId = urlParams.get('c');
+    const isPublicViewerMode = Boolean(publicUid && publicCustId);
+
+    if (isPublicViewerMode) {
+      document.addEventListener('DOMContentLoaded', () => {
+        initPublicCustomerViewer(publicUid, publicCustId);
+      });
     }
 
     onAuthStateChanged(auth, (user) => {
+      if (isPublicViewerMode) return; // Do not interfere with customer viewer mode
       cleanupRealtimeListeners();
       currentUser = user;
       if (user) {
         document.getElementById('login-screen').classList.add('hidden');
         document.getElementById('app-screen').classList.remove('hidden');
         
-        const displayName = user.displayName || user.email;
-        document.getElementById('user-name').innerText = displayName;
-        document.getElementById('desktop-user-name').innerText = displayName;
+        const fallbackName = user.displayName || user.email;
+        document.getElementById('user-name').innerText = fallbackName;
+        document.getElementById('desktop-user-name').innerText = fallbackName;
         document.getElementById('desktop-user-email').innerText = user.email || '';
         document.getElementById('settings-user-email').innerText = user.email || 'N/A';
-        document.getElementById('settings-user-name').innerText = displayName;
+        document.getElementById('settings-user-name').innerText = fallbackName;
         
+        listenBusinessProfile();
         loadCustomers();
         listenAllTransactions();
         listenGallaMetadata();
@@ -278,13 +318,90 @@
 
     window.loginGoogle = () => {
       playSound('tap');
-      signInWithPopup(auth, provider).catch(err => alert("Login Error: " + err.message));
+      signInWithPopup(auth, provider).catch(err => showToast("Login Error: " + err.message, 'error'));
     };
 
     window.logout = () => {
       playSound('tap');
       cleanupRealtimeListeners();
       signOut(auth);
+    };
+
+    // BUSINESS PROFILE HANDLING
+    function listenBusinessProfile() {
+      const bRef = doc(db, "business_profiles", currentUser.uid);
+      unsubscribeBusinessProfile = onSnapshot(bRef, (docSnap) => {
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          userBusinessProfile = {
+            name: data.name || "",
+            tagline: data.tagline || "",
+            phone: data.phone || ""
+          };
+        } else {
+          userBusinessProfile = { name: "", tagline: "", phone: "" };
+        }
+        updateBusinessProfileUI();
+      });
+    }
+
+    function updateBusinessProfileUI() {
+      const activeName = getActiveBusinessTitle();
+      const displayElem = document.getElementById('settings-business-display');
+      if (displayElem) {
+        if (userBusinessProfile.name) {
+          displayElem.innerHTML = `<span class="text-emerald-700 font-extrabold">${escapeHtml(userBusinessProfile.name)}</span> ${userBusinessProfile.tagline ? '<span class="text-slate-400 font-normal">(' + escapeHtml(userBusinessProfile.tagline) + ')</span>' : ''}`;
+        } else {
+          displayElem.innerText = "Not set yet (Using Google account name)";
+        }
+      }
+
+      const deskHeader = document.getElementById('desktop-business-title');
+      if (deskHeader) deskHeader.innerText = activeName;
+      const mobHeader = document.getElementById('user-name');
+      if (mobHeader) mobHeader.innerText = activeName;
+    }
+
+    window.openBusinessProfileModal = () => {
+      playSound('tap');
+      document.getElementById('bp-modal-name').value = userBusinessProfile.name || "";
+      document.getElementById('bp-modal-tagline').value = userBusinessProfile.tagline || "";
+      document.getElementById('bp-modal-phone').value = userBusinessProfile.phone || "";
+      document.getElementById('business-profile-modal').classList.remove('hidden');
+    };
+
+    window.closeBusinessProfileModal = () => {
+      playSound('close');
+      document.getElementById('business-profile-modal').classList.add('hidden');
+    };
+
+    window.saveBusinessProfile = async () => {
+      playSound('tap');
+      const nameInput = document.getElementById('bp-modal-name').value.trim();
+      const taglineInput = document.getElementById('bp-modal-tagline').value.trim();
+      const phoneInput = document.getElementById('bp-modal-phone').value.trim();
+
+      if (!nameInput) {
+        showToast("Please enter your business or shop name", 'error');
+        return;
+      }
+
+      try {
+        await setDoc(doc(db, "business_profiles", currentUser.uid), {
+          name: nameInput,
+          tagline: taglineInput,
+          phone: phoneInput,
+          updatedAt: new Date().toISOString()
+        }, { merge: true });
+
+        userBusinessProfile = { name: nameInput, tagline: taglineInput, phone: phoneInput };
+        updateBusinessProfileUI();
+        closeBusinessProfileModal();
+        playSound('success');
+        showToast("Business profile updated successfully!");
+      } catch (err) {
+        showToast("Failed to save business profile: " + err.message, 'error');
+      }
     };
 
     window.switchTab = (tab) => {
@@ -477,13 +594,23 @@
       if (fNet) fNet.innerText = `Closing: Rs. ${gallaClosingCash.toLocaleString()}`;
     }
 
-    window.editOpeningBalance = async () => {
+    // OPENING BALANCE MODAL (In-page)
+    window.openOpeningBalanceModal = () => {
       playSound('tap');
-      const val = prompt("Apna Initial Galla Base Opening Balance likhein:", gallaOpeningBalance);
-      if (val === null) return;
-      const num = evaluateExpression(val);
+      document.getElementById('opening-bal-input').value = gallaOpeningBalance || 0;
+      document.getElementById('opening-balance-modal').classList.remove('hidden');
+    };
+
+    window.closeOpeningBalanceModal = () => {
+      playSound('close');
+      document.getElementById('opening-balance-modal').classList.add('hidden');
+    };
+
+    window.saveOpeningBalance = async () => {
+      const input = document.getElementById('opening-bal-input').value;
+      const num = evaluateExpression(input);
       if (!Number.isFinite(num)) {
-        alert("Please enter a valid number!");
+        showToast("Please enter a valid number or expression", 'error');
         return;
       }
 
@@ -492,9 +619,11 @@
           openingBalance: num,
           updatedAt: new Date().toISOString()
         }, { merge: true });
+        closeOpeningBalanceModal();
         playSound('success');
+        showToast("Galla opening balance updated!");
       } catch (err) {
-        alert("Error updating opening balance: " + err.message);
+        showToast("Error updating opening balance: " + err.message, 'error');
       }
     };
 
@@ -511,8 +640,6 @@
         return true;
       });
 
-      // Accounts with the latest entry stay on top. Accounts with no entry
-      // automatically remain below all active accounts.
       filtered.sort((a, b) => {
         const aLastEntry = customerLastEntryMap[a.id] || a.lastEntryAt || '';
         const bLastEntry = customerLastEntryMap[b.id] || b.lastEntryAt || '';
@@ -596,59 +723,75 @@
       renderCustomers();
     };
 
-    window.addNewCustomer = async () => {
+    // ADD CUSTOMER MODAL (In-page)
+    window.openAddCustomerModal = () => {
       playSound('tap');
-      const name = prompt("Enter customer/account name (e.g. Jazz, Zong, JazzCash):");
-      if (!name || !name.trim()) return;
-      const phone = prompt("Enter phone number (optional):") || "";
+      document.getElementById('new-cust-name').value = '';
+      document.getElementById('new-cust-phone').value = '';
+      document.getElementById('add-customer-modal').classList.remove('hidden');
+    };
+
+    window.closeAddCustomerModal = () => {
+      playSound('close');
+      document.getElementById('add-customer-modal').classList.add('hidden');
+    };
+
+    window.submitNewCustomer = async () => {
+      const name = document.getElementById('new-cust-name').value.trim();
+      const phone = document.getElementById('new-cust-phone').value.trim();
+      if (!name) {
+        showToast("Please enter customer name", 'error');
+        return;
+      }
 
       try {
         await addDoc(collection(db, "customers"), {
           userId: currentUser.uid,
-          name: name.trim(),
-          phone: phone.trim(),
+          name: name,
+          phone: phone,
           balance: 0,
           createdAt: new Date().toISOString()
         });
+        closeAddCustomerModal();
         playSound('success');
+        showToast(`Customer "${name}" added!`);
       } catch (err) {
-        alert("Failed to create customer: " + err.message);
+        showToast("Failed to create customer: " + err.message, 'error');
       }
     };
 
-    window.editCustomerDetails = async () => {
+    // EDIT CUSTOMER MODAL (In-page)
+    window.openEditCustomerModal = () => {
       playSound('tap');
-      if (!selectedCustomer || !currentUser) return;
+      if (!selectedCustomer) return;
+      document.getElementById('edit-cust-name').value = selectedCustomer.name || '';
+      document.getElementById('edit-cust-phone').value = selectedCustomer.phone || '';
+      document.getElementById('edit-customer-modal').classList.remove('hidden');
+    };
 
-      const editedName = prompt('Edit customer/account name:', selectedCustomer.name || '');
-      if (editedName === null) return;
-      const cleanName = editedName.trim();
+    window.closeEditCustomerModal = () => {
+      playSound('close');
+      document.getElementById('edit-customer-modal').classList.add('hidden');
+    };
+
+    window.submitEditCustomer = async () => {
+      if (!selectedCustomer || !currentUser) return;
+      const cleanName = document.getElementById('edit-cust-name').value.trim();
+      const cleanPhone = document.getElementById('edit-cust-phone').value.trim();
       if (!cleanName) {
-        alert('Customer name cannot be empty.');
+        showToast("Customer name cannot be empty.", 'error');
         return;
       }
 
-      const editedPhone = prompt('Edit mobile number (optional):', selectedCustomer.phone || '');
-      if (editedPhone === null) return;
-      const cleanPhone = editedPhone.trim();
       const previousName = selectedCustomer.name;
-
-      if (cleanName === previousName && cleanPhone === (selectedCustomer.phone || '')) return;
-
       try {
         const customerRef = doc(db, 'customers', selectedCustomer.id);
-        const customerSnap = await getDoc(customerRef);
-        if (!customerSnap.exists() || customerSnap.data().userId !== currentUser.uid) {
-          throw new Error('Customer account not found or access denied.');
-        }
-
         await setDoc(customerRef, {
           name: cleanName,
           phone: cleanPhone,
           updatedAt: new Date().toISOString()
         }, { merge: true });
 
-        // Keep the denormalized customer name in old transaction records in sync.
         if (cleanName !== previousName) {
           const txQuery = query(
             collection(db, 'transactions'),
@@ -669,9 +812,11 @@
         updateCustomerDetailUI();
         renderCustomers();
         populateAccountSelectDropdown();
+        closeEditCustomerModal();
         playSound('success');
+        showToast("Customer details updated!");
       } catch (err) {
-        alert('Error updating customer details: ' + err.message);
+        showToast("Error updating customer: " + err.message, 'error');
       }
     };
 
@@ -825,7 +970,7 @@
       
       const evaluated = evaluateExpression(amountInput.value);
       if (!evaluated || evaluated <= 0) {
-        alert("Please enter a valid amount or formula (e.g. 500+6000)");
+        showToast("Please enter a valid amount or formula (e.g. 500+6000)", 'error');
         return;
       }
 
@@ -873,8 +1018,9 @@
         noteInput.value = '';
         clearPhotoAttachment();
         if (!isDesktop) closeModal();
+        showToast("Entry recorded successfully!");
       } catch (err) {
-        alert("Error saving transaction: " + err.message);
+        showToast("Error saving transaction: " + err.message, 'error');
       }
     };
 
@@ -888,7 +1034,7 @@
       const note = noteInput.value.trim();
 
       if (!evaluated || evaluated <= 0) {
-        alert("Please enter a valid amount or formula (e.g. 500+6000)!");
+        showToast("Please enter a valid amount or formula (e.g. 500+6000)!", 'error');
         return;
       }
 
@@ -953,8 +1099,9 @@
         noteInput.value = '';
         partySelect.value = '';
         playSound('success');
+        showToast("Galla entry added!");
       } catch (err) {
-        alert("Error updating cash book: " + err.message);
+        showToast("Error updating cash book: " + err.message, 'error');
       }
     };
 
@@ -1011,41 +1158,31 @@
       const pageHeight = doc.internal.pageSize.height || doc.internal.pageSize.getHeight();
       const pageWidth = doc.internal.pageSize.width || doc.internal.pageSize.getWidth();
 
-      const text = "GG Khata • Powered by Global Guru";
+      const text = `${getActiveBusinessTitle()} • Powered by GG Khata`;
       doc.setFontSize(8);
       doc.setTextColor(148, 163, 184);
       doc.setFont(undefined, 'bold');
 
       const textWidth = doc.getTextWidth(text);
-      const iconSize = 4;
-      const spacing = 2;
-      const totalWidth = iconSize + spacing + textWidth;
-      const startX = (pageWidth - totalWidth) / 2;
+      const startX = (pageWidth - textWidth) / 2;
       const bottomY = pageHeight - 7;
-
-      if (cachedLogoBase64) {
-        doc.addImage(cachedLogoBase64, 'PNG', startX, bottomY - iconSize + 0.8, iconSize, iconSize);
-      }
-      doc.text(text, startX + iconSize + spacing, bottomY);
+      doc.text(text, startX, bottomY);
     }
 
     window.downloadGallaPDF = () => {
       playSound('download');
       const { jsPDF } = window.jspdf;
       const pdf = new jsPDF();
+      const bizName = getActiveBusinessTitle();
 
-      if (cachedLogoBase64) {
-        pdf.addImage(cachedLogoBase64, 'PNG', 14, 12, 14, 14);
-      }
-      
       pdf.setFontSize(16);
       pdf.setTextColor(5, 150, 105);
-      pdf.text("GG Khata - Galla Cash Book Statement", 32, 20);
+      pdf.text(`${bizName} - Galla Cash Book`, 14, 20);
 
       pdf.setFontSize(9);
       pdf.setTextColor(100, 116, 139);
-      pdf.text(`User Account: ${currentUser.email || 'Admin'}`, 32, 26);
-      pdf.text(`Generated On: ${formatPakistanDateTime(new Date().toISOString(), true)} PKT`, 32, 31);
+      pdf.text(`User Account: ${currentUser ? (currentUser.email || 'Admin') : 'Admin'}`, 14, 26);
+      pdf.text(`Generated On: ${formatPakistanDateTime(new Date().toISOString(), true)} PKT`, 14, 31);
 
       pdf.setFillColor(248, 250, 252);
       pdf.roundedRect(14, 36, 182, 15, 2, 2, 'F');
@@ -1118,27 +1255,28 @@
       playSound('download');
       const { jsPDF } = window.jspdf;
       const pdf = new jsPDF();
+      const targetCust = selectedCustomer || window.publicCustomerData;
+      if (!targetCust) return;
 
-      if (cachedLogoBase64) {
-        pdf.addImage(cachedLogoBase64, 'PNG', 14, 12, 14, 14);
-      }
+      const bizName = getActiveBusinessTitle();
 
       pdf.setFontSize(16);
       pdf.setTextColor(5, 150, 105);
-      pdf.text("GG Khata - Ledger Statement", 32, 20);
+      pdf.text(`${bizName} - Ledger Statement`, 14, 20);
 
       pdf.setFontSize(9);
       pdf.setTextColor(100, 116, 139);
-      pdf.text(`Customer Name: ${toTitleCase(selectedCustomer.name)}`, 32, 26);
-      pdf.text(`Phone: ${selectedCustomer.phone || 'N/A'}  |  Date: ${getTodayDateString()}`, 32, 31);
+      pdf.text(`Customer Name: ${toTitleCase(targetCust.name)}`, 14, 26);
+      pdf.text(`Phone: ${targetCust.phone || 'N/A'}  |  Date: ${getTodayDateString()}`, 14, 31);
 
-      const balStatus = selectedCustomer.balance >= 0 ? 'Receivable' : 'Payable';
-      const balText = `Current Balance: Rs. ${Math.abs(selectedCustomer.balance || 0).toLocaleString()} (${balStatus})`;
+      const balStatus = targetCust.balance >= 0 ? 'Receivable' : 'Payable';
+      const balText = `Current Balance: Rs. ${Math.abs(targetCust.balance || 0).toLocaleString()} (${balStatus})`;
       pdf.setFontSize(10);
-      pdf.setTextColor(selectedCustomer.balance >= 0 ? 225 : 5, selectedCustomer.balance >= 0 ? 29 : 150, selectedCustomer.balance >= 0 ? 72 : 105);
+      pdf.setTextColor(targetCust.balance >= 0 ? 225 : 5, targetCust.balance >= 0 ? 29 : 150, targetCust.balance >= 0 ? 72 : 105);
       pdf.text(balText, 14, 42);
 
-      const sortedTx = [...currentTransactions].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+      const txSource = currentTransactions.length > 0 ? currentTransactions : (window.publicTxData || []);
+      const sortedTx = [...txSource].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
       let runningBal = 0;
       let totalGiven = 0;
       let totalGot = 0;
@@ -1183,15 +1321,24 @@
         }
       });
 
-      pdf.save(`${selectedCustomer.name}_Ledger.pdf`);
+      pdf.save(`${targetCust.name}_Ledger.pdf`);
     };
 
-    window.downloadBackup = async () => {
+    // BACKUP FORMAT DIALOG (In-page)
+    window.openBackupModal = () => {
       playSound('tap');
-      const choice = prompt("Select Backup Format:\n1 = Excel Sheet (.CSV)\n2 = JSON Backup (.JSON - For Shifting Account)\n\nType 1 or 2 below:", "1");
-      if (!choice || (choice !== "1" && choice !== "2")) return;
+      document.getElementById('backup-modal').classList.remove('hidden');
+    };
 
+    window.closeBackupModal = () => {
+      playSound('close');
+      document.getElementById('backup-modal').classList.add('hidden');
+    };
+
+    window.executeBackup = async (format) => {
+      closeBackupModal();
       playSound('download');
+
       try {
         const qCust = query(collection(db, "customers"), where("userId", "==", currentUser.uid));
         const qTx = query(collection(db, "transactions"), where("userId", "==", currentUser.uid));
@@ -1203,7 +1350,7 @@
 
         const dateStr = getTodayDateString();
 
-        if (choice === "1") {
+        if (format === "csv") {
           const customersMap = {};
           custSnap.docs.forEach(d => { customersMap[d.id] = d.data(); });
 
@@ -1226,7 +1373,7 @@
             csv += `"${c.name}","${c.phone}",${Math.abs(c.balance || 0)},"${status}"\n`;
           });
 
-          csv += `\n"GG Khata • Powered by Global Guru","","","","","","",""\n`;
+          csv += `\n"${getActiveBusinessTitle()} • Powered by GG Khata","","","","","","",""\n`;
 
           const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
           const url = URL.createObjectURL(blob);
@@ -1237,18 +1384,20 @@
           a.click();
           document.body.removeChild(a);
           URL.revokeObjectURL(url);
+          showToast("Excel (.CSV) backup downloaded!");
 
-        } else if (choice === "2") {
+        } else if (format === "json") {
           const backupData = {
             backupId: crypto.randomUUID(),
             exportDate: new Date().toISOString(),
             user: currentUser.email,
+            businessProfile: userBusinessProfile,
             totalCustomers: custSnap.docs.length,
             totalTransactions: txSnap.docs.length,
             customers: custSnap.docs.map(d => ({ id: d.id, ...d.data() })),
             transactions: txSnap.docs.map(d => ({ id: d.id, ...d.data() })),
             gallaMeta: { openingBalance: gallaOpeningBalance },
-            footerBranding: "GG Khata • Powered by Global Guru"
+            footerBranding: `${getActiveBusinessTitle()} • Powered by GG Khata`
           };
 
           const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: "application/json" });
@@ -1260,9 +1409,10 @@
           a.click();
           document.body.removeChild(a);
           URL.revokeObjectURL(url);
+          showToast("Complete JSON backup downloaded!");
         }
       } catch (err) {
-        alert("Backup failed: " + err.message);
+        showToast("Backup failed: " + err.message, 'error');
       }
     };
 
@@ -1274,12 +1424,6 @@
     window.handleImportBackupFile = async (event) => {
       const file = event.target.files[0];
       if (!file) return;
-
-      const confirmRestore = confirm("Are you sure you want to import this ledger backup into your current account? Data will be synced safely.");
-      if (!confirmRestore) {
-        event.target.value = "";
-        return;
-      }
 
       playSound('tap');
       const reader = new FileReader();
@@ -1332,6 +1476,10 @@
             }, { merge: true });
           }
 
+          if (imported.businessProfile && imported.businessProfile.name) {
+            await setDoc(doc(db, "business_profiles", currentUser.uid), imported.businessProfile, { merge: true });
+          }
+
           await setDoc(importMarkerRef, {
             userId: currentUser.uid,
             backupId: safeBackupId,
@@ -1339,10 +1487,10 @@
           });
 
           playSound('success');
-          alert(`Successfully imported ${imported.customers.length} customers and ${imported.transactions.length} transactions to your account!`);
+          showToast(`Imported ${imported.customers.length} customers and ${imported.transactions.length} entries!`);
           event.target.value = "";
         } catch (err) {
-          alert("Import Error: " + err.message);
+          showToast("Import Error: " + err.message, 'error');
           event.target.value = "";
         }
       };
@@ -1361,12 +1509,12 @@
       const file = event.target.files[0];
       if (!file) return;
       if (!file.type.startsWith('image/')) {
-        alert('Please select a valid image file.');
+        showToast('Please select a valid image file.', 'error');
         event.target.value = '';
         return;
       }
       if (file.size > 10 * 1024 * 1024) {
-        alert('Image is too large. Maximum allowed size is 10 MB.');
+        showToast('Image is too large. Maximum allowed size is 10 MB.', 'error');
         event.target.value = '';
         return;
       }
@@ -1391,7 +1539,7 @@
 
           canvas.toBlob((blob) => {
             if (!blob) {
-              alert('Could not process this image.');
+              showToast('Could not process this image.', 'error');
               return;
             }
             attachedPhotoBlob = blob;
@@ -1430,30 +1578,30 @@
       if (p2) p2.classList.add('hidden');
     };
 
+    // LIGHTBOX FOR BILL IMAGES (In-page modal, no popups)
     window.viewTransactionImage = (transactionId) => {
       playSound('tap');
-      const transaction = currentTransactions.find(t => t.id === transactionId);
+      const txSource = currentTransactions.length > 0 ? currentTransactions : (window.publicTxData || []);
+      const transaction = txSource.find(t => t.id === transactionId);
       const imageSource = transaction?.receiptImageUrl || transaction?.receiptImage || '';
-      if (!imageSource || (!imageSource.startsWith('https://') && !imageSource.startsWith('data:image/'))) {
-        alert('Receipt image is unavailable.');
+      if (!imageSource) {
+        showToast('Receipt image is unavailable.', 'error');
         return;
       }
-      const w = window.open("");
-      if (!w) {
-        alert('Please allow pop-ups to view the receipt.');
-        return;
-      }
-      const image = w.document.createElement('img');
-      image.src = imageSource;
-      image.style.cssText = 'max-width:92%;margin:30px auto;display:block;border-radius:16px;box-shadow:0 12px 30px rgba(0,0,0,0.15)';
-      w.document.body.appendChild(image);
+      document.getElementById('lightbox-img').src = imageSource;
+      document.getElementById('lightbox-modal').classList.remove('hidden');
+    };
+
+    window.closeLightbox = () => {
+      playSound('close');
+      document.getElementById('lightbox-modal').classList.add('hidden');
     };
 
     window.startSpeechRecognition = (isDesktop = false) => {
       playSound('mic');
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (!SpeechRecognition) {
-        alert("Your browser does not support voice recognition. Please use Google Chrome or Safari.");
+        showToast("Your browser does not support voice recognition. Please use Google Chrome or Safari.", 'info');
         return;
       }
       const recognition = new SpeechRecognition();
@@ -1471,16 +1619,25 @@
       recognition.start();
     };
 
-    window.deleteCustomer = async () => {
+    // DELETE CUSTOMER MODAL (In-page)
+    window.openDeleteCustomerModal = () => {
+      playSound('tap');
+      if (!selectedCustomer) return;
+      document.getElementById('del-cust-confirm-name').innerText = selectedCustomer.name;
+      document.getElementById('delete-confirm-modal').classList.remove('hidden');
+    };
+
+    window.closeDeleteCustomerModal = () => {
+      playSound('close');
+      document.getElementById('delete-confirm-modal').classList.add('hidden');
+    };
+
+    window.confirmDeleteCustomer = async () => {
       playSound('delete');
-      if (!confirm(`Are you sure you want to delete ${selectedCustomer.name}'s account? All records will be removed.`)) return;
+      closeDeleteCustomerModal();
       try {
         const customerId = selectedCustomer.id;
         const customerRef = doc(db, "customers", customerId);
-        const customerSnap = await getDoc(customerRef);
-        if (!customerSnap.exists() || customerSnap.data().userId !== currentUser.uid) {
-          throw new Error('Customer account not found or access denied.');
-        }
 
         const txQuery = query(
           collection(db, "transactions"),
@@ -1505,36 +1662,279 @@
           dPlaceholder.classList.remove('hidden');
           dDetailPane.classList.add('hidden');
         }
+        showToast("Customer and all records deleted!");
       } catch (err) {
-        alert("Error: " + err.message);
+        showToast("Error deleting: " + err.message, 'error');
       }
     };
 
-    window.sendWhatsApp = () => {
+    // UNIVERSAL SHARE MODAL & FUNCTIONALITY
+    let currentPreparedShareData = null;
+
+    function buildShareMessage(customerObj) {
+      const bal = customerObj.balance || 0;
+      const statusText = bal > 0 ? 'Pending to pay' : bal < 0 ? 'Advance balance' : 'Settled';
+      const bizName = getActiveBusinessTitle();
+      
+      const origin = window.location.origin + window.location.pathname;
+      const publicLedgerUrl = `${origin}?u=${currentUser.uid}&c=${customerObj.id}`;
+
+      let phoneClean = (customerObj.phone || '').replace(/[^0-9]/g, '');
+      if (phoneClean.startsWith('0')) phoneClean = '92' + phoneClean.substring(1);
+
+      const msg = `Dear ${toTitleCase(customerObj.name)},
+According to ${bizName}, your current balance is Rs. ${Math.abs(bal).toLocaleString()} (${statusText}).
+
+View your live ledger statement online:
+${publicLedgerUrl}`;
+
+      return {
+        customerName: customerObj.name,
+        phone: phoneClean,
+        text: msg,
+        url: publicLedgerUrl,
+        bizName: bizName
+      };
+    }
+
+    window.openShareModal = async () => {
       playSound('tap');
-      if (!selectedCustomer || !selectedCustomer.phone) {
-        alert("Customer phone number is not available.");
+      if (!selectedCustomer) {
+        showToast("No customer selected", 'error');
         return;
       }
-      let phone = selectedCustomer.phone.replace(/[^0-9]/g, '');
-      if (phone.startsWith('0')) phone = '92' + phone.substring(1);
-      const bal = selectedCustomer.balance || 0;
-      const statusText = bal >= 0 ? 'Pending to pay' : 'Advance balance';
-      const msg = `Dear ${toTitleCase(selectedCustomer.name)},\nAccording to GG Khata records, your current ledger balance is Rs. ${Math.abs(bal).toLocaleString()} (${statusText}).\nPlease review and confirm. Thank you!`;
-      window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
+
+      currentPreparedShareData = buildShareMessage(selectedCustomer);
+
+      // On supported mobile devices, try native share first
+      if (navigator.share && window.innerWidth < 768) {
+        try {
+          await navigator.share({
+            title: `${currentPreparedShareData.bizName} - Ledger`,
+            text: currentPreparedShareData.text,
+            url: currentPreparedShareData.url
+          });
+          return;
+        } catch (e) {
+          // User cancelled or unsupported, fallback to in-app modal
+        }
+      }
+
+      // Open in-page Share Dialog
+      document.getElementById('share-modal-cust-name').innerText = toTitleCase(selectedCustomer.name);
+      document.getElementById('share-modal-preview').innerText = currentPreparedShareData.text;
+      document.getElementById('share-modal-phone').innerText = selectedCustomer.phone || 'No phone set';
+      document.getElementById('share-dialog-modal').classList.remove('hidden');
+    };
+
+    window.closeShareModal = () => {
+      playSound('close');
+      document.getElementById('share-dialog-modal').classList.add('hidden');
+    };
+
+    window.shareToWhatsAppDirect = () => {
+      if (!currentPreparedShareData) return;
+      const phone = currentPreparedShareData.phone;
+      const text = encodeURIComponent(currentPreparedShareData.text);
+      window.open(`https://wa.me/${phone}?text=${text}`, '_blank');
+      closeShareModal();
+    };
+
+    window.shareToSMSDirect = () => {
+      if (!currentPreparedShareData) return;
+      const phone = currentPreparedShareData.phone;
+      const text = encodeURIComponent(currentPreparedShareData.text);
+      window.location.href = `sms:${phone}?body=${text}`;
+      closeShareModal();
+    };
+
+    window.copyShareMessageText = () => {
+      if (!currentPreparedShareData) return;
+      fallbackCopyToClipboard(currentPreparedShareData.text);
+      showToast("Full message & link copied to clipboard!");
+    };
+
+    window.copyShareLinkOnly = () => {
+      if (!currentPreparedShareData) return;
+      fallbackCopyToClipboard(currentPreparedShareData.url);
+      showToast("Live statement link copied!");
+    };
+
+    function fallbackCopyToClipboard(textToCopy) {
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(textToCopy).catch(() => copyViaTextarea(textToCopy));
+      } else {
+        copyViaTextarea(textToCopy);
+      }
+    }
+
+    function copyViaTextarea(text) {
+      const textArea = document.createElement("textarea");
+      textArea.value = text;
+      textArea.style.position = "fixed";
+      textArea.style.left = "-999999px";
+      document.body.appendChild(textArea);
+      textArea.focus();
+      textArea.select();
+      try {
+        document.execCommand('copy');
+      } catch (err) {
+        console.error('Fallback copy failed', err);
+      }
+      document.body.removeChild(textArea);
+    }
+
+    // PUBLIC READ-ONLY VIEWER MODE (NO LOGIN REQUIRED)
+    async function initPublicCustomerViewer(uId, cId) {
+      document.getElementById('login-screen').classList.add('hidden');
+      document.getElementById('app-screen').classList.add('hidden');
+      const publicScreen = document.getElementById('public-viewer-screen');
+      publicScreen.classList.remove('hidden');
+
+      try {
+        // 1. Fetch Business Profile
+        const bDoc = await getDoc(doc(db, "business_profiles", uId));
+        let bizName = "Digital Ledger Book";
+        let bizTagline = "Powered by GG Khata";
+        if (bDoc.exists()) {
+          const bData = bDoc.data();
+          if (bData.name) bizName = bData.name;
+          if (bData.tagline) bizTagline = bData.tagline;
+        }
+        document.getElementById('pv-business-name').innerText = bizName;
+        document.getElementById('pv-business-tagline').innerText = bizTagline;
+
+        // 2. Fetch Customer Details
+        const custDoc = await getDoc(doc(db, "customers", cId));
+        if (!custDoc.exists()) {
+          document.getElementById('pv-loading').innerHTML = `
+            <div class="text-center py-12 text-rose-600">
+              <span class="text-4xl block mb-2">⚠️</span>
+              <h3 class="font-extrabold text-base">Statement Not Found</h3>
+              <p class="text-xs text-slate-500 mt-1">This customer record might have been removed or updated.</p>
+            </div>
+          `;
+          return;
+        }
+
+        const custData = { id: custDoc.id, ...custDoc.data() };
+        window.publicCustomerData = custData;
+
+        document.getElementById('pv-cust-name').innerText = toTitleCase(custData.name);
+        document.getElementById('pv-cust-phone').innerText = custData.phone || 'No phone registered';
+        
+        const bal = Number(custData.balance || 0);
+        const isRec = bal > 0;
+        const isPay = bal < 0;
+        const balEl = document.getElementById('pv-balance');
+        const statusEl = document.getElementById('pv-status-badge');
+        balEl.innerText = `Rs. ${Math.abs(bal).toLocaleString()}`;
+
+        if (isRec) {
+          balEl.className = "text-2xl font-black text-rose-600";
+          statusEl.innerText = "Pending to pay (Baqaya)";
+          statusEl.className = "text-xs font-bold px-3 py-1 rounded-full bg-rose-50 text-rose-700 border border-rose-200";
+        } else if (isPay) {
+          balEl.className = "text-2xl font-black text-emerald-600";
+          statusEl.innerText = "Advance Balance (Jama)";
+          statusEl.className = "text-xs font-bold px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200";
+        } else {
+          balEl.className = "text-2xl font-black text-slate-800";
+          statusEl.innerText = "Settled / Nil (Hisab Barabar)";
+          statusEl.className = "text-xs font-bold px-3 py-1 rounded-full bg-slate-100 text-slate-700 border border-slate-200";
+        }
+
+        // 3. Fetch Transactions
+        const txQ = query(
+          collection(db, "transactions"),
+          where("userId", "==", uId),
+          where("customerId", "==", cId)
+        );
+        const txSnap = await getDocs(txQ);
+        const txList = [];
+        txSnap.forEach(d => txList.push({ id: d.id, ...d.data() }));
+        window.publicTxData = txList;
+
+        const chronological = [...txList].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+        let running = 0;
+        const runningMap = {};
+        chronological.forEach(t => {
+          const amt = Number(t.amount || 0);
+          const isGiven = (t.type === 'diye');
+          running += isGiven ? amt : -amt;
+          runningMap[t.id] = running;
+        });
+
+        const displayTx = [...txList].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+        const listContainer = document.getElementById('pv-tx-list');
+        document.getElementById('pv-loading').classList.add('hidden');
+        document.getElementById('pv-content').classList.remove('hidden');
+
+        if (displayTx.length === 0) {
+          listContainer.innerHTML = '<p class="text-xs text-slate-400 text-center py-8">No transactions recorded yet.</p>';
+          return;
+        }
+
+        listContainer.innerHTML = displayTx.map(t => {
+          const isGiven = t.type === 'diye';
+          const dateStr = formatPakistanDateTime(t.createdAt, true);
+          const runningVal = runningMap[t.id] !== undefined ? runningMap[t.id] : 0;
+          const isPos = runningVal >= 0;
+          const photoUrl = t.receiptImageUrl || t.receiptImage || '';
+          const billBtn = photoUrl
+            ? `<button onclick="window.viewTransactionImage('${escapeHtml(t.id)}')" class="text-[10px] bg-white border border-slate-200 px-2.5 py-1 rounded-lg font-bold text-slate-700 shadow-sm ml-2 hover:bg-slate-50">📷 View Bill</button>`
+            : '';
+
+          return `
+            <div class="flex justify-between items-center p-3.5 rounded-2xl bg-white border border-slate-100 shadow-xs hover:bg-slate-50/70 transition">
+              <div>
+                <div class="flex items-center">
+                  <span class="font-extrabold text-slate-800 text-xs">${escapeHtml(t.note || (isGiven ? 'Given (Debit)' : 'Received (Credit)'))}</span>
+                  ${billBtn}
+                </div>
+                <p class="text-[10px] text-slate-400 mt-0.5 font-medium">${dateStr}</p>
+              </div>
+              <div class="text-right">
+                <span class="font-black text-xs ${isGiven ? 'text-rose-600' : 'text-emerald-600'} block">
+                  ${isGiven ? '-' : '+'} Rs. ${Number(t.amount).toLocaleString()}
+                </span>
+                <span class="text-[9px] font-bold ${isPos ? 'text-rose-500' : 'text-emerald-600'} bg-slate-50 px-2 py-0.5 rounded-md border border-slate-100 shadow-2xs inline-block mt-0.5">
+                  Bal: Rs. ${Math.abs(runningVal).toLocaleString()} ${isPos ? '(Rec)' : '(Pay)'}
+                </span>
+              </div>
+            </div>
+          `;
+        }).join('');
+
+      } catch (err) {
+        document.getElementById('pv-loading').innerHTML = `
+          <div class="text-center py-12 text-slate-600">
+            <span class="text-3xl block mb-2">ℹ️</span>
+            <h3 class="font-extrabold text-sm">Statement Access</h3>
+            <p class="text-xs text-slate-400 mt-1 max-w-xs mx-auto">Please ensure the statement link is valid and copied completely.</p>
+          </div>
+        `;
+      }
+    }
+
+    window.exitPublicViewToAdmin = () => {
+      window.location.href = window.location.origin + window.location.pathname;
     };
   </script>
 </head>
 <body class="bg-slate-100 min-h-screen text-slate-800 antialiased selection:bg-emerald-500 selection:text-white">
 
+  <!-- TOAST NOTIFICATION CONTAINER -->
+  <div id="toast-container" class="fixed top-4 left-1/2 transform -translate-x-1/2 z-[100] flex flex-col gap-2 pointer-events-none items-center w-full px-4"></div>
+
   <!-- 1. LOGIN SCREEN -->
   <div id="login-screen" class="flex flex-col items-center justify-center min-h-screen p-5 bg-gradient-to-b from-emerald-50/60 to-slate-100">
     <div class="glass-card p-8 rounded-3xl shadow-2xl max-w-sm w-full text-center border border-white">
-      <div class="relative inline-block mb-4">
-        <img src="logo.png" alt="GG Khata" class="w-24 h-24 rounded-full mx-auto object-contain shadow-lg bg-white p-1 ring-4 ring-emerald-50">
+      <div class="w-20 h-20 bg-emerald-600 text-white rounded-3xl mx-auto flex items-center justify-center font-black text-3xl shadow-lg ring-4 ring-emerald-100 mb-4">
+        GG
       </div>
       <h2 class="text-2xl font-extrabold text-slate-900 tracking-tight">GG Khata</h2>
-      <p class="text-xs text-slate-500 font-medium mt-1 mb-8">Your Secure Cloud Ledger Book</p>
+      <p class="text-xs text-slate-500 font-medium mt-1 mb-8">Digital Ledger & Cash Book</p>
       
       <button onclick="loginGoogle()" class="w-full py-3.5 px-4 bg-white hover:bg-slate-50 active:scale-[0.98] border border-slate-200 text-slate-700 font-bold rounded-2xl shadow-sm flex items-center justify-center gap-3 transition">
         <svg class="w-5 h-5" viewBox="0 0 24 24">
@@ -1548,16 +1948,89 @@
     </div>
   </div>
 
-  <!-- 2. MAIN APP RESPONSIVE WRAPPER -->
+  <!-- 2. PUBLIC READ-ONLY CUSTOMER VIEWER SCREEN -->
+  <div id="public-viewer-screen" class="hidden min-h-screen bg-slate-100 flex flex-col items-center p-3 md:p-6">
+    <div class="max-w-lg w-full space-y-4">
+      
+      <!-- Public Header Card -->
+      <div class="bg-gradient-to-r from-emerald-800 to-emerald-700 text-white p-5 rounded-3xl shadow-lg flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <div class="w-12 h-12 rounded-2xl bg-white/10 border border-white/20 flex items-center justify-center font-black text-xl text-white">
+            GG
+          </div>
+          <div>
+            <h1 id="pv-business-name" class="text-base md:text-lg font-black tracking-tight leading-tight">Business Ledger</h1>
+            <p id="pv-business-tagline" class="text-[11px] text-emerald-200 font-medium">Digital Khata Statement</p>
+          </div>
+        </div>
+        <div class="text-right">
+          <span class="text-[10px] font-extrabold bg-white/20 text-white px-2.5 py-1 rounded-full border border-white/30 block">
+            🔒 View Only
+          </span>
+          <button onclick="downloadPDF()" class="mt-2 text-[10px] font-bold bg-white text-emerald-800 px-2.5 py-1 rounded-xl shadow-sm hover:bg-emerald-50 transition">
+            📄 PDF
+          </button>
+        </div>
+      </div>
+
+      <!-- Loading State -->
+      <div id="pv-loading" class="bg-white p-8 rounded-3xl border border-slate-200 text-center text-xs text-slate-400 font-semibold shadow-sm">
+        Loading ledger statement...
+      </div>
+
+      <!-- Public Statement Content -->
+      <div id="pv-content" class="hidden space-y-4">
+        
+        <!-- Customer Summary Card -->
+        <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm space-y-3">
+          <div class="flex justify-between items-start">
+            <div>
+              <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Statement For</p>
+              <h2 id="pv-cust-name" class="text-lg font-black text-slate-900 leading-tight"></h2>
+              <p id="pv-cust-phone" class="text-xs text-slate-400 font-medium mt-0.5"></p>
+            </div>
+            <div id="pv-status-badge"></div>
+          </div>
+
+          <div class="pt-2 border-t border-slate-100 flex items-center justify-between">
+            <span class="text-xs font-bold text-slate-500">Current Ledger Balance</span>
+            <span id="pv-balance" class="text-2xl font-black text-slate-900"></span>
+          </div>
+        </div>
+
+        <!-- Transaction Statement List -->
+        <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm space-y-3">
+          <div class="flex items-center justify-between">
+            <h3 class="text-xs font-extrabold text-slate-400 uppercase tracking-wider">Entries History</h3>
+            <span class="text-[10px] font-bold text-slate-400">Live Auto-Sync</span>
+          </div>
+          <div id="pv-tx-list" class="space-y-2"></div>
+        </div>
+
+        <!-- Security Footer & Admin Switch -->
+        <div class="text-center py-4 text-slate-400 text-xs space-y-2">
+          <p class="text-[11px] font-medium">This statement is generated directly by GG Khata cloud ledger.</p>
+          <button onclick="exitPublicViewToAdmin()" class="text-[11px] font-bold text-emerald-700 hover:underline">
+            Are you the business owner? Open Admin Login →
+          </button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- 3. MAIN APP RESPONSIVE WRAPPER -->
   <div id="app-screen" class="hidden h-[100dvh] overflow-hidden flex flex-col md:flex-row bg-slate-100">
     
     <!-- DESKTOP LEFT SIDEBAR -->
     <aside class="hidden md:flex flex-col w-64 lg:w-72 bg-white border-r border-slate-200 h-screen sticky top-0 z-30 p-5 justify-between shadow-sm">
       <div class="space-y-6">
         <div class="flex items-center gap-3">
-          <img src="logo.png" alt="GG Logo" class="w-11 h-11 rounded-full bg-white p-0.5 object-contain shadow-md ring-2 ring-emerald-500/20">
-          <div>
-            <h2 class="text-base font-extrabold text-slate-900 tracking-tight leading-tight">GG Khata</h2>
+          <div class="w-10 h-10 rounded-2xl bg-emerald-600 text-white flex items-center justify-center font-black text-base shadow-md ring-2 ring-emerald-500/20">
+            GG
+          </div>
+          <div class="overflow-hidden">
+            <h2 id="desktop-business-title" class="text-sm font-extrabold text-slate-900 tracking-tight leading-tight truncate">GG Khata</h2>
             <span class="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full inline-block mt-0.5">Cloud Sync 🟢</span>
           </div>
         </div>
@@ -1580,7 +2053,7 @@
             <span class="text-lg">💰</span> Accounts / Galla
           </button>
           <button id="d-tab-btn-settings" onclick="switchTab('settings')" class="w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-slate-600 font-bold text-sm hover:bg-slate-100 transition">
-            <span class="text-lg">⚙️</span> Settings & Backup
+            <span class="text-lg">⚙️</span> Settings & Profile
           </button>
         </nav>
       </div>
@@ -1590,7 +2063,6 @@
           <span>🚪</span> Sign Out
         </button>
         <div class="flex items-center justify-center gap-1.5 text-[11px] font-bold text-slate-400 text-center">
-          <img src="logo.png" alt="GG" class="w-3.5 h-3.5 rounded-full object-contain">
           <span>GG Khata • Powered by Global Guru</span>
         </div>
       </div>
@@ -1602,7 +2074,9 @@
       <!-- Mobile Top Header -->
       <header class="md:hidden flex-none bg-gradient-to-r from-emerald-800 to-emerald-700 text-white p-4 flex justify-between items-center shadow-lg z-20">
         <div class="flex items-center gap-3">
-          <img src="logo.png" alt="GG Logo" class="w-10 h-10 rounded-full bg-white p-0.5 object-contain shadow-md ring-2 ring-emerald-400/30">
+          <div class="w-9 h-9 rounded-2xl bg-white/15 text-white flex items-center justify-center font-black text-sm shadow-inner">
+            GG
+          </div>
           <div>
             <h1 class="text-sm font-extrabold tracking-tight leading-tight">GG Khata</h1>
             <p id="user-name" class="text-[11px] text-emerald-200/90 font-medium truncate max-w-[170px]"></p>
@@ -1662,7 +2136,7 @@
           <div id="customer-list" class="flex-1 min-h-0 overflow-y-auto overscroll-contain divide-y divide-slate-100 custom-scroll"></div>
 
           <div class="flex-none p-3 bg-white/95 border-t border-slate-100 z-10 backdrop-blur-md">
-            <button onclick="addNewCustomer()" class="w-full py-3 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white font-bold rounded-2xl shadow-lg shadow-emerald-600/20 flex items-center justify-center gap-2 transition text-sm">
+            <button onclick="openAddCustomerModal()" class="w-full py-3 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white font-bold rounded-2xl shadow-lg shadow-emerald-600/20 flex items-center justify-center gap-2 transition text-sm">
               <span class="text-lg leading-none font-black">+</span> Add New Customer
             </button>
           </div>
@@ -1686,16 +2160,16 @@
                 <div id="d-cust-balance" class="mt-2"></div>
               </div>
               <div class="flex items-center gap-2">
-                <button onclick="sendWhatsApp()" class="px-3.5 py-2 bg-emerald-50 text-emerald-800 border border-emerald-200 font-bold rounded-xl flex items-center gap-1.5 text-xs hover:bg-emerald-100 transition shadow-sm">
-                  <span>💬</span> WhatsApp
+                <button onclick="openShareModal()" title="Share Ledger Statement" class="px-3.5 py-2 bg-emerald-50 text-emerald-800 border border-emerald-200 font-bold rounded-xl flex items-center gap-1.5 text-xs hover:bg-emerald-100 transition shadow-sm">
+                  <span>↗️</span> Share
                 </button>
-                <button onclick="editCustomerDetails()" title="Edit Customer Name or Mobile Number" class="px-3.5 py-2 bg-blue-50 text-blue-700 border border-blue-200 font-bold rounded-xl flex items-center gap-1.5 text-xs hover:bg-blue-100 transition shadow-sm">
+                <button onclick="openEditCustomerModal()" title="Edit Customer Name or Mobile Number" class="px-3.5 py-2 bg-blue-50 text-blue-700 border border-blue-200 font-bold rounded-xl flex items-center gap-1.5 text-xs hover:bg-blue-100 transition shadow-sm">
                   <span>✏️</span> Edit
                 </button>
                 <button onclick="downloadPDF()" class="px-3.5 py-2 bg-white text-slate-700 border border-slate-200 font-bold rounded-xl flex items-center gap-1.5 text-xs hover:bg-slate-100 transition shadow-sm">
                   <span>📄</span> PDF
                 </button>
-                <button onclick="deleteCustomer()" title="Delete Customer" class="p-2 text-rose-500 hover:bg-rose-50 rounded-xl transition border border-rose-100">
+                <button onclick="openDeleteCustomerModal()" title="Delete Customer" class="p-2 text-rose-500 hover:bg-rose-50 rounded-xl transition border border-rose-100">
                   🗑️
                 </button>
               </div>
@@ -1706,7 +2180,7 @@
               
               <div id="d-photo-preview-container" class="hidden flex items-center justify-between bg-slate-50 border border-emerald-200 p-2.5 rounded-xl">
                 <div class="flex items-center gap-2">
-                  <img id="d-photo-preview-thumb" class="w-8 h-8 rounded-lg object-cover border border-emerald-300" src="">
+                  <img id="d-photo-preview-thumb" class="w-8 h-8 rounded-lg object-cover border border-emerald-300" src="" alt="Thumbnail">
                   <span class="text-xs font-bold text-emerald-800">Bill Photo Attached ✅</span>
                 </div>
                 <button onclick="clearPhotoAttachment()" class="text-xs text-rose-600 font-bold hover:bg-rose-50 px-2 py-1 rounded">Remove</button>
@@ -1763,7 +2237,7 @@
             <div class="bg-slate-50 p-3.5 rounded-2xl border border-slate-100 flex flex-col justify-between">
               <div class="flex items-center justify-center gap-1.5">
                 <span class="text-[10px] font-bold text-slate-500 uppercase">Day's Opening</span>
-                <button onclick="editOpeningBalance()" title="Set/Edit Base Opening Balance" class="text-xs text-emerald-700 hover:text-emerald-900 transition">✏️</button>
+                <button onclick="openOpeningBalanceModal()" title="Set/Edit Base Opening Balance" class="text-xs text-emerald-700 hover:text-emerald-900 transition">✏️</button>
               </div>
               <h5 id="galla-strip-opening" class="text-sm md:text-base font-black text-slate-800 mt-1.5">Rs. 0</h5>
             </div>
@@ -1863,6 +2337,8 @@
       <!-- PAGE 3: SETTINGS VIEW -->
       <div id="view-settings" class="hidden flex-1 p-4 md:p-6 pb-20 md:pb-6 space-y-4 overflow-y-auto bg-slate-50">
         <div class="max-w-2xl mx-auto space-y-4">
+          
+          <!-- User Profile Card -->
           <div class="bg-white p-4 md:p-5 rounded-3xl border border-slate-200 shadow-sm flex items-center justify-between">
             <div class="flex items-center gap-3">
               <div class="w-12 h-12 rounded-full bg-emerald-100 text-emerald-800 flex items-center justify-center font-extrabold text-base shadow-inner">
@@ -1878,6 +2354,23 @@
             </button>
           </div>
 
+          <!-- Business Profile Card (NEW FEATURE) -->
+          <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm space-y-3">
+            <div class="flex items-center justify-between">
+              <div>
+                <h4 class="text-xs font-extrabold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                  <span>🏪</span> Business / Shop Profile
+                </h4>
+                <p id="settings-business-display" class="text-xs text-emerald-700 font-bold mt-1">Not set yet</p>
+                <p class="text-[11px] text-slate-400 mt-0.5">This name will appear on WhatsApp messages, customer portal, and PDF receipts.</p>
+              </div>
+              <button onclick="openBusinessProfileModal()" class="px-3.5 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 rounded-xl text-xs font-bold border border-emerald-200 shadow-sm transition active:scale-95 whitespace-nowrap">
+                ✏️ Set Name
+              </button>
+            </div>
+          </div>
+
+          <!-- Backup & Restore -->
           <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm space-y-3">
             <h4 class="text-xs font-extrabold text-slate-400 uppercase tracking-wider">Backup & Account Transfer</h4>
             
@@ -1886,7 +2379,7 @@
                 <h5 class="text-xs font-bold text-slate-800">Export Backup</h5>
                 <p class="text-[11px] text-slate-400">Download Excel (.CSV) or JSON</p>
               </div>
-              <button onclick="downloadBackup()" class="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-sm transition active:scale-95 flex items-center gap-1.5">
+              <button onclick="openBackupModal()" class="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-sm transition active:scale-95 flex items-center gap-1.5">
                 📥 Download
               </button>
             </div>
@@ -1905,6 +2398,7 @@
             </div>
           </div>
 
+          <!-- Contact Us -->
           <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm space-y-3.5">
             <h4 class="text-xs font-extrabold text-slate-400 uppercase tracking-wider">Contact Us</h4>
             
@@ -1962,7 +2456,6 @@
           </div>
 
           <div class="flex items-center justify-center gap-2 py-4 text-slate-400 text-xs font-bold">
-            <img src="logo.png" alt="GG" class="w-4 h-4 rounded-full object-contain">
             <span>GG Khata • Powered by Global Guru</span>
           </div>
         </div>
@@ -1986,8 +2479,8 @@
   </div>
 
   <!-- 4. CUSTOMER LEDGER MODAL (Mobile Only) -->
-  <div id="tx-modal" onclick="closeModal()" class="md:hidden hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-end justify-center p-0">
-    <div onclick="event.stopPropagation()" class="bg-white w-full max-w-md max-h-[92vh] rounded-t-3xl p-5 shadow-2xl flex flex-col overflow-hidden">
+  <div id="tx-modal" class="md:hidden hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-end justify-center p-0">
+    <div class="bg-white w-full max-w-md max-h-[92vh] rounded-t-3xl p-5 shadow-2xl flex flex-col overflow-hidden">
       <div class="flex justify-between items-start pb-3 border-b border-slate-100">
         <div>
           <h3 id="modal-cust-name" class="text-base font-extrabold text-slate-900 leading-tight"></h3>
@@ -1995,8 +2488,9 @@
           <div id="modal-cust-balance"></div>
         </div>
         <div class="flex items-center gap-1.5">
-          <button onclick="editCustomerDetails()" title="Edit Customer Name or Mobile Number" class="p-2 text-blue-600 hover:bg-blue-50 rounded-xl transition">✏️</button>
-          <button onclick="deleteCustomer()" title="Delete Customer Ledger" class="p-2 text-rose-500 hover:bg-rose-50 rounded-xl transition">🗑️</button>
+          <button onclick="openShareModal()" title="Share Statement" class="p-2 text-emerald-700 hover:bg-emerald-50 rounded-xl transition text-base">↗️</button>
+          <button onclick="openEditCustomerModal()" title="Edit Customer Name or Mobile Number" class="p-2 text-blue-600 hover:bg-blue-50 rounded-xl transition">✏️</button>
+          <button onclick="openDeleteCustomerModal()" title="Delete Customer Ledger" class="p-2 text-rose-500 hover:bg-rose-50 rounded-xl transition">🗑️</button>
           <button onclick="closeModal()" class="text-slate-400 hover:text-slate-700 text-2xl font-bold leading-none p-2">&times;</button>
         </div>
       </div>
@@ -2011,7 +2505,7 @@
       <div class="pt-3 border-t border-slate-100 bg-slate-50/80 -mx-5 -mb-5 p-5 rounded-b-3xl space-y-3">
         <div id="photo-preview-container" class="hidden flex items-center justify-between bg-white border border-emerald-200 p-2 rounded-xl shadow-sm">
           <div class="flex items-center gap-2">
-            <img id="photo-preview-thumb" class="w-8 h-8 rounded-lg object-cover border border-emerald-300" src="">
+            <img id="photo-preview-thumb" class="w-8 h-8 rounded-lg object-cover border border-emerald-300" src="" alt="Thumbnail">
             <span class="text-xs font-bold text-emerald-800">Bill Photo Attached ✅</span>
           </div>
           <button onclick="clearPhotoAttachment()" class="text-xs text-rose-600 font-bold px-2 py-1 hover:bg-rose-50 rounded">Remove</button>
@@ -2043,14 +2537,217 @@
         </div>
 
         <div class="grid grid-cols-2 gap-2 pt-1">
-          <button onclick="sendWhatsApp()" class="py-2 bg-emerald-50 text-emerald-800 border border-emerald-200 font-bold rounded-xl flex items-center justify-center gap-1.5 text-xs hover:bg-emerald-100 transition">
-            <span>💬</span> WhatsApp Reminder
+          <button onclick="openShareModal()" class="py-2 bg-emerald-50 text-emerald-800 border border-emerald-200 font-bold rounded-xl flex items-center justify-center gap-1.5 text-xs hover:bg-emerald-100 transition">
+            <span>↗️</span> Share Statement
           </button>
           <button onclick="downloadPDF()" class="py-2 bg-white text-slate-700 border border-slate-200 font-bold rounded-xl flex items-center justify-center gap-1.5 text-xs hover:bg-slate-100 transition shadow-sm">
             <span>📄</span> PDF Statement
           </button>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- 5. IN-PAGE MODALS -->
+
+  <!-- A. BUSINESS PROFILE MODAL -->
+  <div id="business-profile-modal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <div class="bg-white w-full max-w-sm rounded-3xl p-6 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between pb-2 border-b border-slate-100">
+        <h3 class="text-sm font-extrabold text-slate-900 uppercase tracking-wider flex items-center gap-2">
+          <span>🏪</span> Business Profile
+        </h3>
+        <button onclick="closeBusinessProfileModal()" class="text-slate-400 hover:text-slate-700 font-bold text-xl leading-none">&times;</button>
+      </div>
+
+      <p class="text-xs text-slate-500">Apna dukaan ya karobar ka naam set karein taake har receipt aur WhatsApp message par yehi show ho:</p>
+
+      <div class="space-y-3">
+        <div>
+          <label class="text-[10px] font-bold text-slate-500 block mb-1">Business / Shop Name *</label>
+          <input type="text" id="bp-modal-name" placeholder="e.g. Al-Rehman Traders" class="w-full text-xs font-bold p-3 bg-slate-50 border border-slate-200 rounded-xl focus:border-emerald-500 outline-none">
+        </div>
+
+        <div>
+          <label class="text-[10px] font-bold text-slate-500 block mb-1">Tagline or City (Optional)</label>
+          <input type="text" id="bp-modal-tagline" placeholder="e.g. Wholesale Dealer, Multan" class="w-full text-xs p-3 bg-slate-50 border border-slate-200 rounded-xl focus:border-emerald-500 outline-none">
+        </div>
+
+        <div>
+          <label class="text-[10px] font-bold text-slate-500 block mb-1">Official Mobile / Helpline (Optional)</label>
+          <input type="text" id="bp-modal-phone" placeholder="e.g. 0300-1234567" class="w-full text-xs p-3 bg-slate-50 border border-slate-200 rounded-xl focus:border-emerald-500 outline-none">
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-2 pt-2">
+        <button onclick="closeBusinessProfileModal()" class="py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition">
+          Cancel
+        </button>
+        <button onclick="saveBusinessProfile()" class="py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs transition shadow-md shadow-emerald-600/20">
+          Save Profile
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- B. UNIVERSAL SHARE DIALOG MODAL -->
+  <div id="share-dialog-modal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <div class="bg-white w-full max-w-md rounded-3xl p-6 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between pb-2 border-b border-slate-100">
+        <div>
+          <h3 class="text-sm font-extrabold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+            <span>↗️</span> Share Statement
+          </h3>
+          <p id="share-modal-cust-name" class="text-xs text-emerald-700 font-bold"></p>
+        </div>
+        <button onclick="closeShareModal()" class="text-slate-400 hover:text-slate-700 font-bold text-xl leading-none">&times;</button>
+      </div>
+
+      <div class="bg-slate-50 p-3.5 rounded-2xl border border-slate-200/80">
+        <p class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Message Preview:</p>
+        <pre id="share-modal-preview" class="text-xs text-slate-700 font-medium whitespace-pre-wrap font-sans leading-relaxed"></pre>
+      </div>
+
+      <p class="text-[11px] text-slate-500 flex items-center justify-between">
+        <span>Target Mobile: <strong id="share-modal-phone" class="text-slate-800"></strong></span>
+        <span class="text-emerald-700 font-bold">Live Link Included</span>
+      </p>
+
+      <div class="grid grid-cols-2 gap-2.5 pt-1">
+        <button onclick="shareToWhatsAppDirect()" class="py-3 px-3 bg-[#25D366] hover:bg-[#20bd5a] text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-sm active:scale-95">
+          <span>💬</span> WhatsApp
+        </button>
+        <button onclick="copyShareMessageText()" class="py-3 px-3 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-sm active:scale-95">
+          <span>📋</span> Copy Text
+        </button>
+        <button onclick="copyShareLinkOnly()" class="py-2.5 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 active:scale-95">
+          <span>🔗</span> Copy Link Only
+        </button>
+        <button onclick="shareToSMSDirect()" class="py-2.5 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 active:scale-95">
+          <span>📱</span> SMS Message
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- C. ADD CUSTOMER MODAL -->
+  <div id="add-customer-modal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <div class="bg-white w-full max-w-sm rounded-3xl p-6 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between pb-2 border-b border-slate-100">
+        <h3 class="text-sm font-extrabold text-slate-900 uppercase tracking-wider">Add New Customer / Account</h3>
+        <button onclick="closeAddCustomerModal()" class="text-slate-400 hover:text-slate-700 font-bold text-xl leading-none">&times;</button>
+      </div>
+      <div class="space-y-3">
+        <div>
+          <label class="text-[10px] font-bold text-slate-500 block mb-1">Customer / Party Name *</label>
+          <input type="text" id="new-cust-name" placeholder="e.g. Muhammad Ali / JazzCash" class="w-full text-xs font-bold p-3 bg-slate-50 border border-slate-200 rounded-xl focus:border-emerald-500 outline-none">
+        </div>
+        <div>
+          <label class="text-[10px] font-bold text-slate-500 block mb-1">Mobile Number (Optional)</label>
+          <input type="text" id="new-cust-phone" placeholder="e.g. 03001234567" class="w-full text-xs p-3 bg-slate-50 border border-slate-200 rounded-xl focus:border-emerald-500 outline-none">
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-2 pt-2">
+        <button onclick="closeAddCustomerModal()" class="py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition">Cancel</button>
+        <button onclick="submitNewCustomer()" class="py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs transition shadow-md shadow-emerald-600/20">Add Account</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- D. EDIT CUSTOMER MODAL -->
+  <div id="edit-customer-modal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <div class="bg-white w-full max-w-sm rounded-3xl p-6 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between pb-2 border-b border-slate-100">
+        <h3 class="text-sm font-extrabold text-slate-900 uppercase tracking-wider">Edit Customer Details</h3>
+        <button onclick="closeEditCustomerModal()" class="text-slate-400 hover:text-slate-700 font-bold text-xl leading-none">&times;</button>
+      </div>
+      <div class="space-y-3">
+        <div>
+          <label class="text-[10px] font-bold text-slate-500 block mb-1">Customer Name *</label>
+          <input type="text" id="edit-cust-name" class="w-full text-xs font-bold p-3 bg-slate-50 border border-slate-200 rounded-xl focus:border-emerald-500 outline-none">
+        </div>
+        <div>
+          <label class="text-[10px] font-bold text-slate-500 block mb-1">Mobile Number</label>
+          <input type="text" id="edit-cust-phone" class="w-full text-xs p-3 bg-slate-50 border border-slate-200 rounded-xl focus:border-emerald-500 outline-none">
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-2 pt-2">
+        <button onclick="closeEditCustomerModal()" class="py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition">Cancel</button>
+        <button onclick="submitEditCustomer()" class="py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs transition shadow-md shadow-blue-600/20">Update</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- E. OPENING BALANCE MODAL -->
+  <div id="opening-balance-modal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <div class="bg-white w-full max-w-sm rounded-3xl p-6 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between pb-2 border-b border-slate-100">
+        <h3 class="text-sm font-extrabold text-slate-900 uppercase tracking-wider">Galla Base Opening Balance</h3>
+        <button onclick="closeOpeningBalanceModal()" class="text-slate-400 hover:text-slate-700 font-bold text-xl leading-none">&times;</button>
+      </div>
+      <div>
+        <label class="text-[10px] font-bold text-slate-500 block mb-1">Opening Cash in Drawer (Rs.)</label>
+        <input type="text" id="opening-bal-input" placeholder="e.g. 25000 or 15000+10000" class="w-full text-xs font-bold p-3 bg-slate-50 border border-slate-200 rounded-xl focus:border-emerald-500 outline-none">
+        <span class="text-[9px] text-slate-400 mt-1 block">Supports direct numbers and simple formulas.</span>
+      </div>
+      <div class="grid grid-cols-2 gap-2 pt-2">
+        <button onclick="closeOpeningBalanceModal()" class="py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition">Cancel</button>
+        <button onclick="saveOpeningBalance()" class="py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs transition shadow-md shadow-emerald-600/20">Save Balance</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- F. DELETE CONFIRM MODAL -->
+  <div id="delete-confirm-modal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <div class="bg-white w-full max-w-sm rounded-3xl p-6 shadow-2xl space-y-4 text-center">
+      <div class="w-14 h-14 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center text-2xl mx-auto">
+        🗑️
+      </div>
+      <div>
+        <h3 class="text-base font-extrabold text-slate-900">Delete Account?</h3>
+        <p class="text-xs text-slate-500 mt-1">
+          Are you sure you want to permanently delete <strong id="del-cust-confirm-name" class="text-slate-800"></strong> and all its transactions? This action cannot be undone.
+        </p>
+      </div>
+      <div class="grid grid-cols-2 gap-2 pt-2">
+        <button onclick="closeDeleteCustomerModal()" class="py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition">Cancel</button>
+        <button onclick="confirmDeleteCustomer()" class="py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl text-xs transition shadow-md shadow-rose-600/20">Yes, Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- G. BACKUP FORMAT MODAL -->
+  <div id="backup-modal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <div class="bg-white w-full max-w-sm rounded-3xl p-6 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between pb-2 border-b border-slate-100">
+        <h3 class="text-sm font-extrabold text-slate-900 uppercase tracking-wider">Choose Backup Format</h3>
+        <button onclick="closeBackupModal()" class="text-slate-400 hover:text-slate-700 font-bold text-xl leading-none">&times;</button>
+      </div>
+      <div class="space-y-2.5">
+        <button onclick="executeBackup('csv')" class="w-full p-3.5 bg-slate-50 hover:bg-emerald-50 border border-slate-200 hover:border-emerald-300 rounded-2xl text-left transition flex items-center justify-between">
+          <div>
+            <h5 class="text-xs font-bold text-slate-800">📊 Excel Sheet (.CSV)</h5>
+            <p class="text-[10px] text-slate-400 mt-0.5">Best for viewing in MS Excel or Google Sheets</p>
+          </div>
+          <span class="text-xs font-bold text-emerald-700">Download →</span>
+        </button>
+
+        <button onclick="executeBackup('json')" class="w-full p-3.5 bg-slate-50 hover:bg-emerald-50 border border-slate-200 hover:border-emerald-300 rounded-2xl text-left transition flex items-center justify-between">
+          <div>
+            <h5 class="text-xs font-bold text-slate-800">💾 Complete JSON Backup</h5>
+            <p class="text-[10px] text-slate-400 mt-0.5">Best for restoring or shifting to another Gmail account</p>
+          </div>
+          <span class="text-xs font-bold text-emerald-700">Download →</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- H. LIGHTBOX MODAL FOR BILLS -->
+  <div id="lightbox-modal" class="hidden fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[60] flex items-center justify-center p-4" onclick="closeLightbox()">
+    <div class="relative max-w-2xl max-h-[90vh] bg-white rounded-3xl p-3 shadow-2xl" onclick="event.stopPropagation()">
+      <button onclick="closeLightbox()" class="absolute top-2 right-2 w-8 h-8 rounded-full bg-slate-900 text-white flex items-center justify-center font-bold text-sm shadow-md">&times;</button>
+      <img id="lightbox-img" src="" alt="Receipt Bill" class="max-w-full max-h-[82vh] rounded-2xl object-contain mx-auto">
     </div>
   </div>
 
