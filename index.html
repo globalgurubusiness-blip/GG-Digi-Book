@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- GG Khata - Single-File Frontend v3.3 (Universal Search) (Offline Sync, PDF Date Filter, Business Profile & Universal Share) -->
+<!-- GG Khata - Single-File Frontend v3.5 (Universal Search + App Share Clone Link) (Offline Sync, PDF Date Filter, Business Profile & Universal Share) -->
 <html lang="en" dir="ltr">
 <head>
   <meta charset="UTF-8">
@@ -408,6 +408,31 @@
       playSound('tap');
       cleanupRealtimeListeners();
       signOut(auth);
+    };
+
+    // APP SHARE / INVITE - Clone App link (Zee personal app se alag, generic clone)
+    const CLONE_APP_URL = "https://globalgurubusiness.github.io/gg-khata/";
+
+    window.copyCloneAppLink = async () => {
+      playSound('tap');
+      try {
+        await navigator.clipboard.writeText(CLONE_APP_URL);
+        showToast("Clone app link copied! Ab kisi ko bhi bhej dein.");
+      } catch (err) {
+        const ta = document.createElement('textarea');
+        ta.value = CLONE_APP_URL;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        ta.remove();
+        showToast("Clone app link copied! Ab kisi ko bhi bhej dein.");
+      }
+    };
+
+    window.shareCloneAppWhatsApp = () => {
+      playSound('tap');
+      const msg = "Try GG Khata - Digital Ledger: " + CLONE_APP_URL;
+      window.open("https://wa.me/?text=" + encodeURIComponent(msg), "_blank");
     };
 
     // BUSINESS PROFILE
@@ -848,6 +873,14 @@
       const w = document.getElementById('galla-party-dropdown-wrap');
       if (w && !w.contains(e.target)) closeGallaPartyDropdown();
     });
+
+    // FIX: Inline oninput="..." HTML handlers sirf window wale functions ko dekhte hain.
+    // Module script ke andar wale plain functions (renderGallaPartyOptions, renderTransactions,
+    // renderGallaTransactionsTable) window par nahi hote, is liye type karne par kuch nahi hota tha.
+    // Customer list wala renderCustomers pehle se window par tha, is liye woh chal raha tha.
+    window.renderGallaPartyOptions = renderGallaPartyOptions;
+    window.renderTransactions = renderTransactions;
+    window.renderGallaTransactionsTable = renderGallaTransactionsTable;
 
     window.setFilter = (type) => {
       playSound('tap');
@@ -2746,6 +2779,23 @@
                 ✏️ Set Name
               </button>
             </div>
+          </div>
+
+          <!-- App Share / Invite (Clone App) -->
+          <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm space-y-3">
+            <h4 class="text-xs font-extrabold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+              <span>📤</span> App Share / Invite
+            </h4>
+            <p class="text-[11px] text-slate-400">Ye Zee Tech ka personal app hai. Kisi aur ko dena ho to clone wala link share karein, taake mixup na ho aur har bande ka khata alag rahe.</p>
+            <div class="flex items-center justify-between p-3 rounded-2xl bg-slate-50 border border-slate-100 gap-2">
+              <p id="clone-app-link-text" class="text-[11px] font-bold text-emerald-700 break-all">https://globalgurubusiness.github.io/gg-khata/</p>
+              <button onclick="copyCloneAppLink()" class="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-sm transition active:scale-95 whitespace-nowrap">📋 Copy Link</button>
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+              <button onclick="shareCloneAppWhatsApp()" class="py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-xs font-bold shadow-sm transition active:scale-95">💬 WhatsApp Share</button>
+              <a href="https://globalgurubusiness.github.io/gg-khata/" target="_blank" class="py-2.5 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-bold shadow-sm transition active:scale-95 flex items-center justify-center">Open Clone App →</a>
+            </div>
+            <p class="text-[10px] text-slate-400">Note: Link share karne se aapka khata share nahi hota, har banda apni Gmail se login karke apna alag khata banayega.</p>
           </div>
 
           <!-- Backup & Restore -->
