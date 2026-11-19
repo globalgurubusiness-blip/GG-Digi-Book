@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- GG Khata - Single-File Frontend v3.2 (Offline Sync, PDF Date Filter, Business Profile & Universal Share) -->
+<!-- GG Khata - Single-File Frontend v3.3 (Universal Search) (Offline Sync, PDF Date Filter, Business Profile & Universal Share) -->
 <html lang="en" dir="ltr">
 <head>
   <meta charset="UTF-8">
@@ -93,6 +93,24 @@
     let attachedPhotoPreviewUrl = "";
     let gallaTxHistory = [];
     let customerLastEntryMap = {};
+    let customerLastAmountMap = {};
+
+    function ggUniversalMatch(q, fields) {
+      if (!q) return true;
+      q = String(q).toLowerCase().trim();
+      if (!q) return true;
+      const qDigits = q.replace(/[^0-9]/g, '');
+      return fields.some(f => {
+        if (f === null || f === undefined || f === '') return false;
+        const s = String(f).toLowerCase();
+        if (s.includes(q)) return true;
+        if (qDigits) {
+          const d = s.replace(/[^0-9]/g, '');
+          if (d && d.includes(qDigits)) return true;
+        }
+        return false;
+      });
+    }
 
     let userBusinessProfile = {
       name: "",
@@ -615,6 +633,7 @@
       unsubscribeAllTx = onSnapshot(q, (snapshot) => {
         gallaTxHistory = [];
         customerLastEntryMap = {};
+        customerLastAmountMap = {};
 
         snapshot.forEach(docSnap => {
           const data = { id: docSnap.id, ...docSnap.data() };
@@ -624,6 +643,7 @@
             const savedTime = new Date(customerLastEntryMap[data.customerId] || 0).getTime();
             if (Number.isFinite(entryTime) && entryTime > savedTime) {
               customerLastEntryMap[data.customerId] = data.createdAt;
+              customerLastAmountMap[data.customerId] = Number(data.amount || 0);
             }
           }
 
@@ -697,7 +717,7 @@
       listDiv.innerHTML = '';
 
       let filtered = customersList.filter(c => {
-        const matches = c.name.toLowerCase().includes(searchVal) || (c.phone && c.phone.includes(searchVal));
+        const matches = ggUniversalMatch(searchVal, [c.name, c.phone, c.address, c.balance, Math.abs(Number(c.balance || 0)), customerLastAmountMap[c.id]]);
         if (!matches) return false;
         if (currentFilter === 'receivable') return c.balance > 0;
         if (currentFilter === 'payable') return c.balance < 0;
@@ -761,17 +781,73 @@
       });
     };
 
-    function populateAccountSelectDropdown() {
-      const select = document.getElementById('galla-party-select');
-      if (!select) return;
-      select.innerHTML = '<option value="">-- Direct Cash (Counter / No Party) --</option>';
+    let gallaSelectedPartyId = '';
+
+    window.toggleGallaPartyDropdown = (e) => {
+      if (e) e.stopPropagation();
+      const list = document.getElementById('galla-party-list');
+      if (!list) return;
+      list.classList.toggle('hidden');
+      if (!list.classList.contains('hidden')) {
+        renderGallaPartyOptions();
+        const s = document.getElementById('galla-party-search');
+        if (s) s.focus();
+      }
+    };
+
+    window.closeGallaPartyDropdown = () => {
+      const list = document.getElementById('galla-party-list');
+      if (list) list.classList.add('hidden');
+    };
+
+    window.selectGallaParty = (id) => {
+      gallaSelectedPartyId = id || '';
+      document.getElementById('galla-party-select').value = gallaSelectedPartyId;
+      const btnText = document.getElementById('galla-party-btn-text');
+      if (!id) {
+        btnText.innerText = '-- Direct Cash (Counter / No Party) --';
+      } else {
+        const c = customersList.find(x => x.id === id);
+        btnText.innerText = c ? `${toTitleCase(c.name)} (Balance: Rs. ${Number(c.balance || 0).toLocaleString()})` : '-- Direct Cash (Counter / No Party) --';
+      }
+      closeGallaPartyDropdown();
+    };
+
+    function renderGallaPartyOptions() {
+      const box = document.getElementById('galla-party-options');
+      if (!box) return;
+      const searchEl = document.getElementById('galla-party-search');
+      const q = searchEl ? searchEl.value.trim() : '';
+      let html = `<div onclick="selectGallaParty('')" class="p-3 text-xs font-bold text-slate-800 hover:bg-emerald-50 cursor-pointer border-b border-slate-100">-- Direct Cash (Counter / No Party) --</div>`;
+      let found = 0;
       customersList.forEach(c => {
-        const opt = document.createElement('option');
-        opt.value = c.id;
-        opt.innerText = `${toTitleCase(c.name)} (Balance: Rs. ${Number(c.balance || 0).toLocaleString()})`;
-        select.appendChild(opt);
+        const lastAmt = customerLastAmountMap[c.id];
+        if (!ggUniversalMatch(q, [c.name, c.phone, c.address, c.balance, Math.abs(Number(c.balance || 0)), lastAmt])) return;
+        found++;
+        const label = `${toTitleCase(c.name)} (Balance: Rs. ${Number(c.balance || 0).toLocaleString()})`;
+        html += `<div onclick="selectGallaParty('${c.id}')" class="p-3 hover:bg-emerald-50 cursor-pointer border-b border-slate-100"><div class="text-xs font-bold text-slate-800">${escapeHtml(label)}</div><div class="text-[10px] text-slate-400">${escapeHtml(c.phone || '')} ${c.address ? ' \u2022 ' + escapeHtml(c.address) : ''}</div></div>`;
       });
+      if (q && found === 0) html += `<div class="p-4 text-xs text-slate-400 text-center">No customer found</div>`;
+      box.innerHTML = html;
     }
+
+    function populateAccountSelectDropdown() {
+      renderGallaPartyOptions();
+      const btnText = document.getElementById('galla-party-btn-text');
+      if (!btnText) return;
+      if (!gallaSelectedPartyId) {
+        btnText.innerText = '-- Direct Cash (Counter / No Party) --';
+      } else {
+        const c = customersList.find(x => x.id === gallaSelectedPartyId);
+        if (c) btnText.innerText = `${toTitleCase(c.name)} (Balance: Rs. ${Number(c.balance || 0).toLocaleString()})`;
+        else { gallaSelectedPartyId = ''; document.getElementById('galla-party-select').value = ''; btnText.innerText = '-- Direct Cash (Counter / No Party) --'; }
+      }
+    }
+
+    document.addEventListener('click', (e) => {
+      const w = document.getElementById('galla-party-dropdown-wrap');
+      if (w && !w.contains(e.target)) closeGallaPartyDropdown();
+    });
 
     window.setFilter = (type) => {
       playSound('tap');
@@ -959,11 +1035,20 @@
         txWithBalMap[t.id] = running;
       });
 
+      const txSearchElM = document.getElementById('tx-search');
+      const txSearchElD = document.getElementById('d-tx-search');
+      const txQ = ((txSearchElM && txSearchElM.value) || (txSearchElD && txSearchElD.value) || '').trim();
+      const filteredTx = currentTransactions.filter(t => {
+        const dateStr = formatPakistanDateTime(t.createdAt, true);
+        const balAfterThis = txWithBalMap[t.id] !== undefined ? txWithBalMap[t.id] : 0;
+        return ggUniversalMatch(txQ, [t.note, t.amount, Math.abs(Number(t.amount || 0)), t.type, dateStr, balAfterThis, t.type === 'diye' ? 'diye given debit cash out' : 'liye received credit cash in']);
+      });
+
       const renderHtml = () => {
-        if (currentTransactions.length === 0) {
-          return '<p class="text-xs text-gray-400 text-center py-8">No transactions recorded yet.</p>';
+        if (filteredTx.length === 0) {
+          return currentTransactions.length === 0 ? '<p class="text-xs text-gray-400 text-center py-8">No transactions recorded yet.</p>' : '<p class="text-xs text-gray-400 text-center py-8">No transactions match your search.</p>';
         }
-        return currentTransactions.map(t => {
+        return filteredTx.map(t => {
           const dateStr = formatPakistanDateTime(t.createdAt, true);
           const isGiven = t.type === 'diye';
           const balAfterThis = txWithBalMap[t.id] !== undefined ? txWithBalMap[t.id] : 0;
@@ -1205,6 +1290,12 @@
         amountInput.value = '';
         noteInput.value = '';
         partySelect.value = '';
+        gallaSelectedPartyId = '';
+        const gallaBtnText = document.getElementById('galla-party-btn-text');
+        if (gallaBtnText) gallaBtnText.innerText = '-- Direct Cash (Counter / No Party) --';
+        const gallaSearchEl = document.getElementById('galla-party-search');
+        if (gallaSearchEl) gallaSearchEl.value = '';
+        renderGallaPartyOptions();
         playSound('success');
         if (navigator.onLine) showToast("Galla entry recorded!");
         else showToast("Galla entry saved offline 🟡", 'warning');
@@ -1218,8 +1309,16 @@
       if (!listEl) return;
       listEl.innerHTML = '';
 
-      if (gallaTxHistory.length === 0) {
-        listEl.innerHTML = '<tr><td colspan="6" class="p-8 text-center text-xs text-slate-400">No cash entries recorded yet.</td></tr>';
+      const gallaSearchEl = document.getElementById('galla-search');
+      const gallaQ = gallaSearchEl ? gallaSearchEl.value.trim() : '';
+      const filteredGalla = gallaTxHistory.filter(t => {
+        const dateStr = formatPakistanDateTime(t.createdAt, true);
+        const isCashIn = (t.gallaAction === 'in') || (t.type === 'liye');
+        return ggUniversalMatch(gallaQ, [t.customerName, t.note, t.amount, Math.abs(Number(t.amount || 0)), dateStr, isCashIn ? 'cash in' : 'cash out', t.type]);
+      });
+
+      if (filteredGalla.length === 0) {
+        listEl.innerHTML = gallaTxHistory.length === 0 ? '<tr><td colspan="6" class="p-8 text-center text-xs text-slate-400">No cash entries recorded yet.</td></tr>' : '<tr><td colspan="6" class="p-8 text-center text-xs text-slate-400">No cash entries match your search.</td></tr>';
         return;
       }
 
@@ -1234,7 +1333,7 @@
         runningMap[t.id] = running;
       });
 
-      gallaTxHistory.slice(0, 80).forEach(t => {
+      filteredGalla.slice(0, 80).forEach(t => {
         const row = document.createElement('tr');
         row.className = "border-b border-slate-100 hover:bg-slate-50/80 transition text-xs";
         const isCashIn = (t.gallaAction === 'in') || (t.type === 'liye');
@@ -2389,7 +2488,7 @@
 
           <div class="px-4 py-3 bg-white border-b border-slate-100 space-y-2.5">
             <div class="relative">
-              <input type="text" id="search-input" oninput="renderCustomers()" placeholder="Search customer by name or phone..." class="w-full bg-slate-50 pl-9 pr-4 py-2.5 text-xs rounded-xl border border-slate-200/80 outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition">
+              <input type="text" id="search-input" oninput="renderCustomers()" placeholder="Search name, phone, amount, address..." class="w-full bg-slate-50 pl-9 pr-4 py-2.5 text-xs rounded-xl border border-slate-200/80 outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition">
               <span class="absolute left-3 top-3 text-slate-400 text-xs">🔍</span>
             </div>
             <div class="flex gap-2">
@@ -2481,6 +2580,7 @@
 
             <div class="bg-white p-5 rounded-3xl border border-slate-200/80 shadow-sm flex-1 flex flex-col space-y-3">
               <h4 class="text-xs font-extrabold text-slate-400 uppercase tracking-wider">Transaction History</h4>
+              <input type="text" id="d-tx-search" oninput="renderTransactions()" placeholder="Search note, amount, date..." class="w-full text-xs p-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-emerald-500 mb-2">
               <div id="d-tx-history-list" class="space-y-2 flex-1 overflow-y-auto max-h-[350px]"></div>
             </div>
           </div>
@@ -2539,7 +2639,17 @@
 
             <div>
               <label class="text-[10px] font-bold text-slate-500 block mb-1">Select Account / Party (Optional):</label>
-              <select id="galla-party-select" class="w-full text-xs font-bold p-3 bg-slate-50 border border-slate-200 rounded-xl focus:border-emerald-500 outline-none"></select>
+              <div class="relative" id="galla-party-dropdown-wrap">
+                <button type="button" id="galla-party-btn" onclick="toggleGallaPartyDropdown(event)" class="w-full text-xs font-bold p-3 bg-slate-50 border border-slate-200 rounded-xl focus:border-emerald-500 outline-none flex justify-between items-center text-left">
+                  <span id="galla-party-btn-text">-- Direct Cash (Counter / No Party) --</span>
+                  <span>▾</span>
+                </button>
+                <div id="galla-party-list" class="hidden absolute z-30 left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden">
+                  <input type="text" id="galla-party-search" oninput="renderGallaPartyOptions()" placeholder="Search name, phone, amount, address..." class="w-full text-xs p-3 border-b border-slate-200 outline-none focus:border-emerald-500" autocomplete="off">
+                  <div id="galla-party-options" class="max-h-60 overflow-y-auto custom-scroll"></div>
+                </div>
+                <input type="hidden" id="galla-party-select" value="">
+              </div>
             </div>
 
             <div class="space-y-2.5">
@@ -2572,6 +2682,7 @@
             </div>
             
             <!-- Independent Scroll Container -->
+            <input type="text" id="galla-search" oninput="renderGallaTransactionsTable()" placeholder="Search account, note, amount, date..." class="w-full text-xs p-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-emerald-500">
             <div class="overflow-y-auto max-h-[420px] rounded-2xl border border-slate-200/80 shadow-inner custom-scroll">
               <table class="w-full text-left border-collapse table-auto">
                 <thead class="sticky top-0 z-10 bg-slate-100 shadow-xs">
@@ -2767,6 +2878,7 @@
         <div class="flex justify-between items-center mb-2.5">
           <h5 class="text-[11px] font-extrabold text-slate-400 uppercase tracking-wider">Transaction History</h5>
         </div>
+        <input type="text" id="tx-search" oninput="renderTransactions()" placeholder="Search note, amount, date..." class="w-full text-xs p-2.5 bg-white border border-slate-200 rounded-xl outline-none focus:border-emerald-500 mb-2">
         <div id="tx-history-list" class="space-y-1.5"></div>
       </div>
 
